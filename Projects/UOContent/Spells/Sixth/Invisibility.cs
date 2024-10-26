@@ -7,7 +7,7 @@ using Server.Targeting;
 
 namespace Server.Spells.Sixth
 {
-    public class InvisibilitySpell : MagerySpell, ISpellTargetingMobile
+    public class InvisibilitySpell : MagerySpell, ITargetingSpell<Mobile>
     {
         private static readonly SpellInfo _info = new(
             "Invisibility",
@@ -51,7 +51,7 @@ namespace Server.Spells.Sixth
 
                 StopTimer(m);
 
-                var duration = TimeSpan.FromSeconds(1.2 * Caster.Skills.Magery.Fixed / 10);
+                var duration = TimeSpan.FromSeconds(1.2 * Caster.Skills.Magery.Value);
 
                 BuffInfo.RemoveBuff(m, BuffIcon.HidingAndOrStealth);
                 BuffInfo.AddBuff(m, new BuffInfo(BuffIcon.Invisibility, 1075825, duration, m)); // Invisibility/Invisible
@@ -67,8 +67,6 @@ namespace Server.Spells.Sixth
 
                 _table[m] = timerToken;
             }
-
-            FinishSequence();
         }
 
         public override bool CheckCast()
@@ -84,7 +82,7 @@ namespace Server.Spells.Sixth
 
         public override void OnCast()
         {
-            Caster.Target = new SpellTargetMobile(this, TargetFlags.Beneficial, Core.ML ? 10 : 12);
+            Caster.Target = new SpellTarget<Mobile>(this, TargetFlags.Beneficial);
         }
 
         public static bool HasTimer(Mobile m) => _table.ContainsKey(m);

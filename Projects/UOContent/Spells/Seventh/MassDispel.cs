@@ -4,7 +4,7 @@ using Server.Mobiles;
 
 namespace Server.Spells.Seventh
 {
-    public class MassDispelSpell : MagerySpell, ISpellTargetingPoint3D
+    public class MassDispelSpell : MagerySpell, ITargetingSpell<IPoint3D>
     {
         private static readonly SpellInfo _info = new(
             "Mass Dispel",
@@ -35,11 +35,8 @@ namespace Server.Spells.Seventh
 
                 if (map != null)
                 {
-                    var eable = map.GetMobilesInRange<BaseCreature>(new Point3D(p), 8);
-
                     using var queue = PooledRefQueue<Mobile>.Create();
-
-                    foreach (var bc in eable)
+                    foreach (var bc in map.GetMobilesInRange<BaseCreature>(new Point3D(p), 8))
                     {
                         if (!(bc.IsDispellable && Caster.CanBeHarmful(bc, false)))
                         {
@@ -69,21 +66,17 @@ namespace Server.Spells.Seventh
                         }
                     }
 
-                    eable.Free();
-
                     while (queue.Count > 0)
                     {
                         queue.Dequeue().Delete();
                     }
                 }
             }
-
-            FinishSequence();
         }
 
         public override void OnCast()
         {
-            Caster.Target = new SpellTargetPoint3D(this, range: Core.ML ? 10 : 12);
+            Caster.Target = new SpellTarget<IPoint3D>(this, allowGround: true);
         }
     }
 }

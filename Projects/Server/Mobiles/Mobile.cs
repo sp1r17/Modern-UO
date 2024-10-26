@@ -1,10 +1,22 @@
-using System;
-using System.Collections.Generic;
-using System.Runtime.CompilerServices;
+/*************************************************************************
+ * ModernUO                                                              *
+ * Copyright 2019-2024 - ModernUO Development Team                       *
+ * Email: hi@modernuo.com                                                *
+ * File: Mobile.cs                                                       *
+ *                                                                       *
+ * This program is free software: you can redistribute it and/or modify  *
+ * it under the terms of the GNU General Public License as published by  *
+ * the Free Software Foundation, either version 3 of the License, or     *
+ * (at your option) any later version.                                   *
+ *                                                                       *
+ * You should have received a copy of the GNU General Public License     *
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>. *
+ *************************************************************************/
+
 using Server.Accounting;
+using Server.Collections;
 using Server.ContextMenus;
 using Server.Guilds;
-using Server.Gumps;
 using Server.HuePickers;
 using Server.Items;
 using Server.Logging;
@@ -14,7 +26,9 @@ using Server.Network;
 using Server.Prompts;
 using Server.Targeting;
 using Server.Text;
-using Server.Utilities;
+using System;
+using System.Collections.Generic;
+using System.Runtime.CompilerServices;
 using CalcMoves = Server.Movement.Movement;
 
 namespace Server;
@@ -45,7 +59,7 @@ public class DamageEntry
 }
 
 [Flags]
-public enum StatType
+public enum StatType : byte
 {
     Str = 1,
     Dex = 2,
@@ -172,7 +186,7 @@ public delegate bool AllowBeneficialHandler(Mobile from, Mobile target);
 public delegate bool AllowHarmfulHandler(Mobile from, Mobile target);
 
 public delegate Container CreateCorpseHandler(
-    Mobile from, HairInfo hair, FacialHairInfo facialhair, List<Item> initialContent, List<Item> equippedItems
+    Mobile from, List<Item> initialContent, List<Item> equippedItems
 );
 
 public delegate int AOSStatusHandler(Mobile from, int index);
@@ -180,7 +194,7 @@ public delegate int AOSStatusHandler(Mobile from, int index);
 /// <summary>
 ///     Base class representing players, npcs, and creatures.
 /// </summary>
-public partial class Mobile : IHued, IComparable<Mobile>, ISpawnable, IObjectPropertyListEntity
+public partial class Mobile : IHued, IComparable<Mobile>, ISpawnable, IObjectPropertyListEntity, IValueLinkListNode<Mobile>
 {
     // Allow four warmode changes in 0.5 seconds, any more will be delay for two seconds
     private const int WarmodeCatchCount = 4;
@@ -192,9 +206,6 @@ public partial class Mobile : IHued, IComparable<Mobile>, ISpawnable, IObjectPro
     private static readonly TimeSpan WarmodeSpamDelay = TimeSpan.FromSeconds(Core.SE ? 4.0 : 2.0);
     private static readonly TimeSpan ExpireCombatantDelay = TimeSpan.FromMinutes(1.0);
     private static readonly TimeSpan ExpireAggressorsDelay = TimeSpan.FromSeconds(5.0);
-
-    private static readonly List<IEntity> m_MoveList = new();
-    private static readonly List<Mobile> m_MoveClientList = new();
 
     private static readonly object m_GhostMutateContext = new();
 
@@ -252,7 +263,6 @@ public partial class Mobile : IHued, IComparable<Mobile>, ISpawnable, IObjectPro
     private int m_ChangingCombatant;
     private Mobile m_Combatant;
     private TimerExecutionToken _combatTimerToken;
-    private ContextMenu m_ContextMenu;
     private bool m_Criminal;
 
     private MobileDelta m_DeltaFlags;
@@ -262,7 +272,9 @@ public partial class Mobile : IHued, IComparable<Mobile>, ISpawnable, IObjectPro
     private TimerExecutionToken _expireAggrTimerToken;
     private TimerExecutionToken _expireCombatantTimerToken;
     private TimerExecutionToken _expireCriminalTimerToken;
-    private FacialHairInfo m_FacialHair;
+    private VirtualHairInfo _facialHair;
+    public VirtualHairInfo FacialHair => _facialHair ??= new VirtualHairInfo(FacialHairItemID, FacialHairHue);
+
     private int m_Fame, m_Karma;
     private bool m_Female, m_Warmode, m_Hidden, m_Blessed, m_Flying;
     private int m_Followers, m_FollowersMax;
@@ -271,7 +283,9 @@ public partial class Mobile : IHued, IComparable<Mobile>, ISpawnable, IObjectPro
     private BaseGuild m_Guild;
     private string m_GuildTitle;
 
-    private HairInfo m_Hair;
+    private VirtualHairInfo _hair;
+    public VirtualHairInfo Hair => _hair ??= new VirtualHairInfo(HairItemID, HairHue);
+
     private int m_Hits, m_Stam, m_Mana;
 
     private Item m_Holding;
@@ -361,6 +375,11 @@ public partial class Mobile : IHued, IComparable<Mobile>, ISpawnable, IObjectPro
         NextSkillTime = Core.TickCount;
         DamageEntries = new List<DamageEntry>();
     }
+
+    // Sectors
+    public Mobile Next { get; set; }
+    public Mobile Previous { get; set; }
+    public bool OnLinkList { get; set; }
 
     public static bool DragEffects { get; set; } = true;
 
@@ -488,8 +507,7 @@ public partial class Mobile : IHued, IComparable<Mobile>, ISpawnable, IObjectPro
             if (oldValue != value)
             {
                 m_Hunger = value;
-
-                EventSink.InvokeHungerChanged(this, oldValue);
+                OnHungerChanged(oldValue);
             }
         }
     }
@@ -555,6 +573,15 @@ public partial class Mobile : IHued, IComparable<Mobile>, ISpawnable, IObjectPro
 
                 SendLocalizedMessage(m_Paralyzed ? 502381 : 502382);
                 _paraTimerToken.Cancel();
+            }
+
+            if (!value && m_NetState != null)
+            {
+                var now = Core.TickCount;
+                if (now - m_NetState._nextMovementTime > 0)
+                {
+                    m_NetState._nextMovementTime = now;
+                }
             }
         }
     }
@@ -845,20 +872,12 @@ public partial class Mobile : IHued, IComparable<Mobile>, ISpawnable, IObjectPro
         }
     }
 
-    public ContextMenu ContextMenu
-    {
-        get => m_ContextMenu;
-        set
-        {
-            m_ContextMenu = value;
-            m_NetState.SendDisplayContextMenu(m_ContextMenu);
-        }
-    }
-
+    [IgnoreDupe]
     public bool Pushing { get; set; }
 
     public virtual bool IsDeadBondedPet => false;
 
+    [IgnoreDupe]
     public ISpell Spell
     {
         get => m_Spell;
@@ -989,7 +1008,7 @@ public partial class Mobile : IHued, IComparable<Mobile>, ISpawnable, IObjectPro
 
     public static IWeapon DefaultWeapon { get; set; }
 
-    [CommandProperty(AccessLevel.Counselor)]
+    [CommandProperty(AccessLevel.Counselor, canModify: true)]
     public Skills Skills { get; private set; }
 
     [CommandProperty(AccessLevel.Counselor, AccessLevel.Administrator)]
@@ -2149,59 +2168,62 @@ public partial class Mobile : IHued, IComparable<Mobile>, ISpawnable, IObjectPro
     [CommandProperty(AccessLevel.GameMaster)]
     public int HairItemID
     {
-        get => m_Hair?.ItemID ?? 0;
+        get => _hair?.ItemId ?? 0;
         set
         {
-            if (m_Hair == null && value > 0)
+            if (_hair == null && value > 0)
             {
-                m_Hair = new HairInfo(value);
+                _hair = new VirtualHairInfo(value);
             }
             else if (value <= 0)
             {
-                m_Hair = null;
+                _hair = null;
             }
-            else if (m_Hair != null)
+            else if (_hair != null)
             {
-                m_Hair.ItemID = value;
+                _hair.ItemId = value;
             }
 
             Delta(MobileDelta.Hair);
+            this.MarkDirty();
         }
     }
 
     [CommandProperty(AccessLevel.GameMaster)]
     public int FacialHairItemID
     {
-        get => m_FacialHair?.ItemID ?? 0;
+        get => _facialHair?.ItemId ?? 0;
         set
         {
-            if (m_FacialHair == null && value > 0)
+            if (_facialHair == null && value > 0)
             {
-                m_FacialHair = new FacialHairInfo(value);
+                _facialHair = new VirtualHairInfo(value);
             }
             else if (value <= 0)
             {
-                m_FacialHair = null;
+                _facialHair = null;
             }
-            else if (m_FacialHair != null)
+            else if (_facialHair != null)
             {
-                m_FacialHair.ItemID = value;
+                _facialHair.ItemId = value;
             }
 
             Delta(MobileDelta.FacialHair);
+            this.MarkDirty();
         }
     }
 
     [CommandProperty(AccessLevel.GameMaster)]
     public int HairHue
     {
-        get => m_Hair?.Hue ?? 0;
+        get => _hair?.Hue ?? 0;
         set
         {
-            if (m_Hair != null)
+            if (_hair != null)
             {
-                m_Hair.Hue = value;
+                _hair.Hue = value;
                 Delta(MobileDelta.Hair);
+                this.MarkDirty();
             }
         }
     }
@@ -2209,13 +2231,14 @@ public partial class Mobile : IHued, IComparable<Mobile>, ISpawnable, IObjectPro
     [CommandProperty(AccessLevel.GameMaster)]
     public int FacialHairHue
     {
-        get => m_FacialHair?.Hue ?? 0;
+        get => _facialHair?.Hue ?? 0;
         set
         {
-            if (m_FacialHair != null)
+            if (_facialHair != null)
             {
-                m_FacialHair.Hue = value;
+                _facialHair.Hue = value;
                 Delta(MobileDelta.FacialHair);
+                this.MarkDirty();
             }
         }
     }
@@ -2246,18 +2269,17 @@ public partial class Mobile : IHued, IComparable<Mobile>, ISpawnable, IObjectPro
         AddNameProperties(list);
     }
 
+    [IgnoreDupe]
     [CommandProperty(AccessLevel.GameMaster, readOnly: true)]
     public DateTime Created { get; set; } = Core.Now;
 
-    [CommandProperty(AccessLevel.GameMaster)]
-    DateTime ISerializable.LastSerialized { get; set; } = Core.Now;
-
-    long ISerializable.SavePosition { get; set; } = -1;
-
-    BufferWriter ISerializable.SaveBuffer { get; set; }
-
+    [IgnoreDupe]
     [CommandProperty(AccessLevel.Counselor)]
     public Serial Serial { get; }
+
+    public byte SerializedThread { get; set; }
+    public int SerializedPosition { get; set; }
+    public int SerializedLength { get; set; }
 
     public virtual void Serialize(IGenericWriter writer)
     {
@@ -2269,12 +2291,12 @@ public partial class Mobile : IHued, IComparable<Mobile>, ISpawnable, IObjectPro
 
         byte hairflag = 0x00;
 
-        if (m_Hair != null)
+        if (_hair != null)
         {
             hairflag |= 0x01;
         }
 
-        if (m_FacialHair != null)
+        if (_facialHair != null)
         {
             hairflag |= 0x02;
         }
@@ -2283,12 +2305,12 @@ public partial class Mobile : IHued, IComparable<Mobile>, ISpawnable, IObjectPro
 
         if ((hairflag & 0x01) != 0)
         {
-            m_Hair?.Serialize(writer);
+            _hair?.Serialize(writer);
         }
 
         if ((hairflag & 0x02) != 0)
         {
-            m_FacialHair?.Serialize(writer);
+            _facialHair?.Serialize(writer);
         }
 
         writer.Write(Race);
@@ -2423,8 +2445,8 @@ public partial class Mobile : IHued, IComparable<Mobile>, ISpawnable, IObjectPro
         m_Map?.OnLeave(this);
         m_Map = null;
 
-        m_Hair = null;
-        m_FacialHair = null;
+        _hair = null;
+        _facialHair = null;
         m_MountItem = null;
 
         World.RemoveEntity(this);
@@ -2697,14 +2719,14 @@ public partial class Mobile : IHued, IComparable<Mobile>, ISpawnable, IObjectPro
             sendFacialHair = true;
         }
 
-        var hairSerial = HairInfo.FakeSerial(Serial);
+        var hairSerial = Hair.VirtualSerial;
         var hairLength = removeHair
             ? OutgoingVirtualHairPackets.RemovePacketLength
             : OutgoingVirtualHairPackets.EquipUpdatePacketLength;
 
         Span<byte> hairPacket = stackalloc byte[hairLength].InitializePacket();
 
-        var facialHairSerial = FacialHairInfo.FakeSerial(Serial);
+        var facialHairSerial = FacialHair.VirtualSerial;
         var facialHairLength = removeFacialHair
             ? OutgoingVirtualHairPackets.RemovePacketLength
             : OutgoingVirtualHairPackets.EquipUpdatePacketLength;
@@ -2712,9 +2734,9 @@ public partial class Mobile : IHued, IComparable<Mobile>, ISpawnable, IObjectPro
         Span<byte> facialHairPacket = stackalloc byte[facialHairLength].InitializePacket();
 
         const int cacheLength = OutgoingMobilePackets.MobileMovingPacketCacheByteLength;
-        const int width = OutgoingMobilePackets.MobileMovingPacketLength;
 
-        var mobileMovingCache = stackalloc byte[cacheLength].InitializePackets(width);
+        Span<byte> mobileMovingCache = stackalloc byte[cacheLength];
+        mobileMovingCache.Clear();
 
         var ourState = m_NetState;
 
@@ -2795,14 +2817,14 @@ public partial class Mobile : IHued, IComparable<Mobile>, ISpawnable, IObjectPro
             {
                 if (removeHair)
                 {
-                    OutgoingVirtualHairPackets.CreateRemoveHairPacket(hairPacket, hairSerial);
+                    OutgoingVirtualHairPackets.CreateRemoveHairPacket(hairPacket, (uint)hairSerial);
                 }
                 else
                 {
                     OutgoingVirtualHairPackets.CreateHairEquipUpdatePacket(
                         hairPacket,
                         this,
-                        hairSerial,
+                        (uint)hairSerial,
                         HairItemID,
                         HairHue,
                         Layer.Hair
@@ -2816,19 +2838,20 @@ public partial class Mobile : IHued, IComparable<Mobile>, ISpawnable, IObjectPro
             {
                 if (removeFacialHair)
                 {
-                    OutgoingVirtualHairPackets.CreateRemoveHairPacket(facialHairPacket, facialHairSerial);
+                    OutgoingVirtualHairPackets.CreateRemoveHairPacket(facialHairPacket, (uint)facialHairSerial);
                 }
                 else
                 {
                     OutgoingVirtualHairPackets.CreateHairEquipUpdatePacket(
                         facialHairPacket,
                         this,
-                        facialHairSerial,
+                        (uint)facialHairSerial,
                         FacialHairItemID,
                         FacialHairHue,
                         Layer.FacialHair
                     );
                 }
+
                 ourState.Send(facialHairPacket);
             }
 
@@ -2855,8 +2878,6 @@ public partial class Mobile : IHued, IComparable<Mobile>, ISpawnable, IObjectPro
             return;
         }
 
-        var eable = Map.GetClientsInRange(m_Location);
-
         Span<byte> statBufferTrue = stackalloc byte[OutgoingMobilePackets.MobileStatusCompactLength].InitializePacket();
         Span<byte> statBufferFalse = stackalloc byte[OutgoingMobilePackets.MobileStatusCompactLength].InitializePacket();
         Span<byte> hbpBuffer = stackalloc byte[OutgoingMobilePackets.MobileHealthbarPacketLength].InitializePacket();
@@ -2865,7 +2886,7 @@ public partial class Mobile : IHued, IComparable<Mobile>, ISpawnable, IObjectPro
         Span<byte> removeEntity = stackalloc byte[OutgoingEntityPackets.RemoveEntityLength].InitializePacket();
         Span<byte> hitsPacket = stackalloc byte[OutgoingMobilePackets.MobileAttributePacketLength].InitializePacket();
 
-        foreach (var state in eable)
+        foreach (var state in Map.GetClientsInRange(m_Location))
         {
             var beholder = state.Mobile;
 
@@ -2934,14 +2955,14 @@ public partial class Mobile : IHued, IComparable<Mobile>, ISpawnable, IObjectPro
             {
                 if (removeHair)
                 {
-                    OutgoingVirtualHairPackets.CreateRemoveHairPacket(hairPacket, hairSerial);
+                    OutgoingVirtualHairPackets.CreateRemoveHairPacket(hairPacket, (uint)hairSerial);
                 }
                 else
                 {
                     OutgoingVirtualHairPackets.CreateHairEquipUpdatePacket(
                         hairPacket,
                         this,
-                        hairSerial,
+                        (uint)hairSerial,
                         HairItemID,
                         HairHue,
                         Layer.Hair
@@ -2955,26 +2976,25 @@ public partial class Mobile : IHued, IComparable<Mobile>, ISpawnable, IObjectPro
             {
                 if (removeFacialHair)
                 {
-                    OutgoingVirtualHairPackets.CreateRemoveHairPacket(facialHairPacket, facialHairSerial);
+                    OutgoingVirtualHairPackets.CreateRemoveHairPacket(facialHairPacket, (uint)facialHairSerial);
                 }
                 else
                 {
                     OutgoingVirtualHairPackets.CreateHairEquipUpdatePacket(
                         facialHairPacket,
                         this,
-                        facialHairSerial,
+                        (uint)facialHairSerial,
                         FacialHairItemID,
                         FacialHairHue,
                         Layer.FacialHair
                     );
                 }
+
                 state.Send(facialHairPacket);
             }
 
             SendOPLPacketTo(state);
         }
-
-        eable.Free();
     }
 
     public ISpawner Spawner { get; set; }
@@ -3268,9 +3288,9 @@ public partial class Mobile : IHued, IComparable<Mobile>, ISpawnable, IObjectPro
 
         string suffix = hasTitle switch
         {
-            true when hasGuild  => $" {Title} [{Utility.FixHtmlFormattable(guild.Abbreviation)}]",
+            true when hasGuild  => $" {Title} [{guild.Abbreviation.FixHtmlFormattable()}]",
             true                => $" {Title}",
-            false when hasGuild => $" [{Utility.FixHtmlFormattable(guild.Abbreviation)}]",
+            false when hasGuild => $" [{guild.Abbreviation.FixHtmlFormattable()}]",
             _                   => " "
         };
 
@@ -3286,16 +3306,16 @@ public partial class Mobile : IHued, IComparable<Mobile>, ISpawnable, IObjectPro
             {
                 if (NewGuildDisplay)
                 {
-                    list.Add($"{Utility.FixHtmlFormattable(guildTitle)}, {Utility.FixHtmlFormattable(guild.Name)}");
+                    list.Add($"{guildTitle.FixHtmlFormattable()}, {guild.Name.FixHtmlFormattable()}");
                 }
                 else
                 {
-                    list.Add($"{Utility.FixHtmlFormattable(guildTitle)}, {Utility.FixHtmlFormattable(guild.Name)} Guild{type}");
+                    list.Add($"{guildTitle.FixHtmlFormattable()}, {guild.Name.FixHtmlFormattable()} Guild{type}");
                 }
             }
             else
             {
-                list.Add(Utility.FixHtml(guild.Name));
+                list.Add(guild.Name.FixHtml());
             }
         }
     }
@@ -3415,7 +3435,6 @@ public partial class Mobile : IHued, IComparable<Mobile>, ISpawnable, IObjectPro
                 Skills[mod.Skill]?.Update();
             }
         }
-
     }
 
     public virtual void AddSkillMod(SkillMod mod)
@@ -3557,6 +3576,8 @@ public partial class Mobile : IHued, IComparable<Mobile>, ISpawnable, IObjectPro
     public bool InLOS(Point3D target) =>
         !Deleted && m_Map != null && (m_AccessLevel > AccessLevel.Player || m_Map.LineOfSight(this, target));
 
+    public bool AtPoint(int x, int y) => m_Location.m_X == x && m_Location.m_Y == y;
+
     public bool BeginAction<T>() => BeginAction(typeof(T));
 
     public bool BeginAction(object toLock)
@@ -3692,6 +3713,14 @@ public partial class Mobile : IHued, IComparable<Mobile>, ISpawnable, IObjectPro
     {
     }
 
+    /// <summary>
+    ///     Overridable. Virtual event invoked after the <see cref="Hunger" /> property has changed.
+    ///     <seealso cref="Hunger" />
+    /// </summary>
+    public virtual void OnHungerChanged(int oldValue)
+    {
+    }
+
     public double GetDistanceToSqrt(Point3D p)
     {
         var xDelta = m_Location.m_X - p.m_X;
@@ -3704,6 +3733,14 @@ public partial class Mobile : IHued, IComparable<Mobile>, ISpawnable, IObjectPro
     {
         var xDelta = m_Location.m_X - m.m_Location.m_X;
         var yDelta = m_Location.m_Y - m.m_Location.m_Y;
+
+        return Math.Sqrt(xDelta * xDelta + yDelta * yDelta);
+    }
+
+    public double GetDistanceToSqrt(Point2D p)
+    {
+        var xDelta = m_Location.m_X - p.X;
+        var yDelta = m_Location.m_Y - p.Y;
 
         return Math.Sqrt(xDelta * xDelta + yDelta * yDelta);
     }
@@ -4053,10 +4090,12 @@ public partial class Mobile : IHued, IComparable<Mobile>, ISpawnable, IObjectPro
         return true;
     }
 
-    public virtual bool CheckMovement(Direction d, out int newZ) => Movement.Movement.CheckMovement(this, d, out newZ);
+    public virtual bool CheckMovement(Direction d, out int newZ) => CalcMoves.CheckMovement(this, d, out newZ);
 
-    private bool CanMove(Direction d, Point3D oldLocation, ref Point3D newLocation)
+    private bool CanMove(Direction d, Point3D oldLocation, out Point3D newLocation)
     {
+        newLocation = oldLocation;
+
         if (m_Spell?.OnCasterMoving(d) == false)
         {
             return false;
@@ -4074,61 +4113,13 @@ public partial class Mobile : IHued, IComparable<Mobile>, ISpawnable, IObjectPro
             return false;
         }
 
-        int x = oldLocation.m_X, y = oldLocation.m_Y;
-        int oldX = x, oldY = y;
+        var oldX = oldLocation.m_X;
+        var oldY = oldLocation.m_Y;
         var oldZ = oldLocation.m_Z;
-
-        switch (d & Direction.Mask)
-        {
-            case Direction.North:
-                {
-                    --y;
-                    break;
-                }
-            case Direction.Right:
-                {
-                    ++x;
-                    --y;
-                    break;
-                }
-            case Direction.East:
-                {
-                    ++x;
-                    break;
-                }
-            case Direction.Down:
-                {
-                    ++x;
-                    ++y;
-                    break;
-                }
-            case Direction.South:
-                {
-                    ++y;
-                    break;
-                }
-            case Direction.Left:
-                {
-                    --x;
-                    ++y;
-                    break;
-                }
-            case Direction.West:
-                {
-                    --x;
-                    break;
-                }
-            case Direction.Up:
-                {
-                    --x;
-                    --y;
-                    break;
-                }
-        }
-
-        newLocation.m_X = x;
-        newLocation.m_Y = y;
-        newLocation.m_Z = newZ;
+        var x = oldX;
+        var y = oldY;
+        CalcMoves.Offset(d, ref x, ref y);
+        newLocation = new Point3D(x, y, newZ);
 
         Pushing = false;
 
@@ -4144,46 +4135,68 @@ public partial class Mobile : IHued, IComparable<Mobile>, ISpawnable, IObjectPro
 
         if (oldSector != newSector)
         {
-            for (var i = 0; i < oldSector.Mobiles.Count; ++i)
+            using var queue = PooledRefQueue<IEntity>.Create(2048);
+            foreach (var m in oldSector.Mobiles)
             {
-                var m = oldSector.Mobiles[i];
+                if (m != this && m.X == oldX && m.Y == oldY && m.Z + 15 > oldZ && oldZ + 15 > m.Z)
+                {
+                    queue.Enqueue(m);
+                }
+            }
 
-                if (m != this && m.X == oldX && m.Y == oldY && m.Z + 15 > oldZ && oldZ + 15 > m.Z &&
-                    !m.OnMoveOff(this))
+            while (queue.Count > 0)
+            {
+                if (!queue.Dequeue().OnMoveOff(this))
                 {
                     return false;
                 }
             }
 
-            for (var i = 0; i < oldSector.Items.Count; ++i)
+            foreach (var item in oldSector.Items)
             {
-                var item = oldSector.Items[i];
-
                 if (item.AtWorldPoint(oldX, oldY) &&
-                    (item.Z == oldZ || item.Z + item.ItemData.Height > oldZ && oldZ + 15 > item.Z) &&
-                    !item.OnMoveOff(this))
+                    (item.Z == oldZ || item.Z + item.ItemData.Height > oldZ && oldZ + 15 > item.Z))
+                {
+                    queue.Enqueue(item);
+                }
+            }
+
+            while (queue.Count > 0)
+            {
+                if (!queue.Dequeue().OnMoveOff(this))
                 {
                     return false;
                 }
             }
 
-            for (var i = 0; i < newSector.Mobiles.Count; ++i)
+            foreach (var m in newSector.Mobiles)
             {
-                var m = newSector.Mobiles[i];
+                if (m.X == x && m.Y == y && m.Z + 15 > newZ && newZ + 15 > m.Z)
+                {
+                    queue.Enqueue(m);
+                }
+            }
 
-                if (m.X == x && m.Y == y && m.Z + 15 > newZ && newZ + 15 > m.Z && !m.OnMoveOver(this))
+            while (queue.Count > 0)
+            {
+                if (!queue.Dequeue().OnMoveOver(this))
                 {
                     return false;
                 }
             }
 
-            for (var i = 0; i < newSector.Items.Count; ++i)
+            foreach (var item in newSector.Items)
             {
-                var item = newSector.Items[i];
-
                 if (item.AtWorldPoint(x, y) &&
-                    (item.Z == newZ || item.Z + item.ItemData.Height > newZ && newZ + 15 > item.Z) &&
-                    !item.OnMoveOver(this))
+                    (item.Z == newZ || item.Z + item.ItemData.Height > newZ && newZ + 15 > item.Z))
+                {
+                    queue.Enqueue(item);
+                }
+            }
+
+            while (queue.Count > 0)
+            {
+                if (!queue.Dequeue().OnMoveOver(this))
                 {
                     return false;
                 }
@@ -4191,36 +4204,70 @@ public partial class Mobile : IHued, IComparable<Mobile>, ISpawnable, IObjectPro
         }
         else
         {
-            for (var i = 0; i < oldSector.Mobiles.Count; ++i)
+            using var queue = PooledRefQueue<(IEntity, byte)>.Create(2048);
+            foreach (var m in oldSector.Mobiles)
             {
-                var m = oldSector.Mobiles[i];
-
-                if (m != this && m.X == oldX && m.Y == oldY && m.Z + 15 > oldZ && oldZ + 15 > m.Z &&
-                    !m.OnMoveOff(this))
+                byte flag;
+                if (m != this && m.X == oldX && m.Y == oldY && m.Z + 15 > oldZ && oldZ + 15 > m.Z)
                 {
-                    return false;
+                    flag = 1;
+                }
+                else
+                {
+                    flag = 0;
                 }
 
-                if (m.X == x && m.Y == y && m.Z + 15 > newZ && newZ + 15 > m.Z && !m.OnMoveOver(this))
+                if (m.X == x && m.Y == y && m.Z + 15 > newZ && newZ + 15 > m.Z)
+                {
+                    flag += 2;
+                }
+
+                if (flag > 0)
+                {
+                    queue.Enqueue((m, flag));
+                }
+            }
+
+            while (queue.Count > 0)
+            {
+                var (entity, flag) = queue.Dequeue();
+
+                if (flag > 0 && !entity.OnMoveOff(this) || flag > 1 && !entity.OnMoveOver(this))
                 {
                     return false;
                 }
             }
 
-            for (var i = 0; i < oldSector.Items.Count; ++i)
+            foreach (var item in oldSector.Items)
             {
-                var item = oldSector.Items[i];
-
+                byte flag;
                 if (item.AtWorldPoint(oldX, oldY) &&
-                    (item.Z == oldZ || item.Z + item.ItemData.Height > oldZ && oldZ + 15 > item.Z) &&
-                    !item.OnMoveOff(this))
+                    (item.Z == oldZ || item.Z + item.ItemData.Height > oldZ && oldZ + 15 > item.Z))
                 {
-                    return false;
+                    flag = 1;
+                }
+                else
+                {
+                    flag = 0;
                 }
 
                 if (item.AtWorldPoint(x, y) &&
-                    (item.Z == newZ || item.Z + item.ItemData.Height > newZ && newZ + 15 > item.Z) &&
-                    !item.OnMoveOver(this))
+                    (item.Z == newZ || item.Z + item.ItemData.Height > newZ && newZ + 15 > item.Z))
+                {
+                    flag += 2;
+                }
+
+                if (flag > 0)
+                {
+                    queue.Enqueue((item, flag));
+                }
+            }
+
+            while (queue.Count > 0)
+            {
+                var (entity, flag) = queue.Dequeue();
+
+                if (flag > 0 && !entity.OnMoveOff(this) || flag > 1 && !entity.OnMoveOver(this))
                 {
                     return false;
                 }
@@ -4230,21 +4277,6 @@ public partial class Mobile : IHued, IComparable<Mobile>, ISpawnable, IObjectPro
         if (!InternalOnMove(d))
         {
             return false;
-        }
-
-        if (
-            CalcMoves.EnableFastwalkPrevention &&
-            AccessLevel < CalcMoves.FastwalkExemptionLevel &&
-            m_NetState?.AddStep(d) == false
-        )
-        {
-            var fw = new FastWalkEventArgs(m_NetState);
-            EventSink.InvokeFastWalk(fw);
-
-            if (fw.Blocked)
-            {
-                return false;
-            }
         }
 
         LastMoveTime = Core.TickCount;
@@ -4267,93 +4299,87 @@ public partial class Mobile : IHued, IComparable<Mobile>, ISpawnable, IObjectPro
         }
 
         var oldLocation = m_Location;
-        Point3D newLocation = oldLocation;
+        Point3D newLocation;
 
         if ((m_Direction & Direction.Mask) == (d & Direction.Mask))
         {
             // We are actually moving (not just a direction change)
-            if (!CanMove(d, oldLocation, ref newLocation))
+            if (!CanMove(d, oldLocation, out newLocation))
             {
                 return false;
             }
 
             DisruptiveAction();
         }
+        else
+        {
+            newLocation = oldLocation;
+        }
 
-        m_NetState?.SendMovementAck(m_NetState.Sequence, this);
+        if (m_NetState != null)
+        {
+            m_NetState._nextMovementTime += ComputeMovementSpeed(d);
+            m_NetState.SendMovementAck(m_NetState.Sequence, this);
+        }
 
         SetLocation(newLocation, false);
         SetDirection(d);
 
         if (m_Map != null)
         {
-            var eable = m_Map.GetObjectsInRange(m_Location, Core.GlobalMaxUpdateRange);
+            using var moveQueue = PooledRefQueue<IEntity>.Create(2048);
+            using var moveClientQueue = PooledRefQueue<Mobile>.Create(2048);
 
-            foreach (var o in eable)
+            foreach (var mob in m_Map.GetMobilesInRange(m_Location, Core.GlobalMaxUpdateRange))
             {
-                if (o == this)
+                if (mob == this)
                 {
                     continue;
                 }
 
-                if (o is Mobile mob)
+                if (mob.NetState != null)
                 {
-                    if (mob.NetState != null)
+                    moveClientQueue.Enqueue(mob);
+                }
+
+                moveQueue.Enqueue(mob);
+            }
+
+            foreach (var item in m_Map.GetItemsInRange(m_Location, Core.GlobalMaxUpdateRange))
+            {
+                if (item.HandlesOnMovement)
+                {
+                    moveQueue.Enqueue(item);
+                }
+            }
+
+            if (moveClientQueue.Count > 0)
+            {
+                const int cacheLength = OutgoingMobilePackets.MobileMovingPacketCacheByteLength;
+
+                Span<byte> mobileMovingCache = stackalloc byte[cacheLength];
+                mobileMovingCache.Clear();
+
+                while (moveClientQueue.Count > 0)
+                {
+                    var m = moveClientQueue.Dequeue();
+                    var ns = m.NetState;
+
+                    if (ns != null && Utility.InUpdateRange(m_Location, m.m_Location) && m.CanSee(this))
                     {
-                        m_MoveClientList.Add(mob);
+                        ns.SendMobileMovingUsingCache(mobileMovingCache, m, this);
                     }
-
-                    m_MoveList.Add(mob);
-                }
-                else if (o is Item item && item.HandlesOnMovement)
-                {
-                    m_MoveList.Add(item);
                 }
             }
 
-            eable.Free();
-
-            const int cacheLength = OutgoingMobilePackets.MobileMovingPacketCacheByteLength;
-            const int width = OutgoingMobilePackets.MobileMovingPacketLength;
-
-            var mobileMovingCache = stackalloc byte[cacheLength].InitializePackets(width);
-
-            foreach (var m in m_MoveClientList)
+            while (moveQueue.Count > 0)
             {
-                var ns = m.NetState;
-
-                if (ns != null && Utility.InUpdateRange(m_Location, m.m_Location) && m.CanSee(this))
-                {
-                    ns.SendMobileMovingUsingCache(mobileMovingCache, m, this);
-                }
-            }
-
-            for (var i = 0; i < m_MoveList.Count; ++i)
-            {
-                var o = m_MoveList[i];
-
-                if (o is Mobile mobile)
-                {
-                    mobile.OnMovement(this, oldLocation);
-                }
-                else if (o is Item item)
-                {
-                    item.OnMovement(this, oldLocation);
-                }
-            }
-
-            if (m_MoveList.Count > 0)
-            {
-                m_MoveList.Clear();
-            }
-
-            if (m_MoveClientList.Count > 0)
-            {
-                m_MoveClientList.Clear();
+                moveQueue.Dequeue().OnMovement(this, oldLocation);
             }
         }
 
         OnAfterMove(oldLocation);
+
         return true;
     }
 
@@ -4508,7 +4534,7 @@ public partial class Mobile : IHued, IComparable<Mobile>, ISpawnable, IObjectPro
             BodyMod = 0;
             Body = Race.AliveBody(this);
 
-            ProcessDeltaQueue();
+            ProcessDelta();
 
             for (var i = Items.Count - 1; i >= 0; --i)
             {
@@ -4525,7 +4551,6 @@ public partial class Mobile : IHued, IComparable<Mobile>, ISpawnable, IObjectPro
                 }
             }
 
-            SendIncomingPacket();
             SendIncomingPacket();
 
             OnAfterResurrect();
@@ -4565,6 +4590,11 @@ public partial class Mobile : IHued, IComparable<Mobile>, ISpawnable, IObjectPro
     /// <param name="spell"></param>
     public virtual void OnSpellCast(ISpell spell)
     {
+        var now = Core.TickCount;
+        if (m_NetState != null && now - m_NetState._nextMovementTime > 0)
+        {
+            m_NetState._nextMovementTime = now;
+        }
     }
 
     /// <summary>
@@ -4746,29 +4776,16 @@ public partial class Mobile : IHued, IComparable<Mobile>, ISpawnable, IObjectPro
             }
         }
 
-        HairInfo hair = null;
-        if (m_Hair != null)
-        {
-            hair = new HairInfo(m_Hair.ItemID, m_Hair.Hue);
-        }
-
-        FacialHairInfo facialhair = null;
-        if (m_FacialHair != null)
-        {
-            facialhair = new FacialHairInfo(m_FacialHair.ItemID, m_FacialHair.Hue);
-        }
-
-        var c = CreateCorpseHandler?.Invoke(this, hair, facialhair, content, equip);
+        var c = CreateCorpseHandler?.Invoke(this, content, equip);
 
         if (m_Map != null)
         {
-            var eable = m_Map.GetClientsInRange(m_Location);
             var corpseSerial = c?.Serial ?? Serial.Zero;
 
             Span<byte> deathAnimation = stackalloc byte[OutgoingMobilePackets.DeathAnimationPacketLength].InitializePacket();
             Span<byte> removeEntity = stackalloc byte[OutgoingEntityPackets.RemoveEntityLength].InitializePacket();
 
-            foreach (var state in eable)
+            foreach (var state in m_Map.GetClientsInRange(m_Location))
             {
                 if (state != m_NetState)
                 {
@@ -4782,8 +4799,6 @@ public partial class Mobile : IHued, IComparable<Mobile>, ISpawnable, IObjectPro
                     }
                 }
             }
-
-            eable.Free();
         }
 
         Region.OnDeath(this);
@@ -4816,39 +4831,34 @@ public partial class Mobile : IHued, IComparable<Mobile>, ISpawnable, IObjectPro
         if (!m_Player)
         {
             Delete();
+            return;
         }
-        else
-        {
-            m_NetState.SendDeathStatus(true);
 
-            Warmode = false;
+        m_NetState.SendDeathStatus();
 
-            BodyMod = 0;
-            // Body = this.Female ? 0x193 : 0x192;
-            Body = Race.GhostBody(this);
+        Warmode = false;
 
-            var deathShroud = new Item(0x204E) { Movable = false, Layer = Layer.OuterTorso };
+        BodyMod = 0;
+        // Body = this.Female ? 0x193 : 0x192;
+        Body = Race.GhostBody(this);
 
-            AddItem(deathShroud);
+        var deathShroud = new Item(0x204E) { Movable = false, Layer = Layer.OuterTorso };
 
-            Items.Remove(deathShroud);
-            Items.Insert(0, deathShroud);
+        AddItem(deathShroud);
 
-            Poison = null;
-            Combatant = null;
+        Items.Remove(deathShroud);
+        Items.Insert(0, deathShroud);
 
-            Hits = 0;
-            Stam = 0;
-            Mana = 0;
+        Poison = null;
+        Combatant = null;
 
-            EventSink.InvokePlayerDeath(this);
+        Hits = 0;
+        Stam = 0;
+        Mana = 0;
 
-            ProcessDeltaQueue();
+        ProcessDelta();
 
-            m_NetState.SendDeathStatus(false);
-
-            CheckStatTimers();
-        }
+        CheckStatTimers();
     }
 
     public virtual bool CheckTarget(Mobile from, Target targ, object targeted) => true;
@@ -5060,12 +5070,12 @@ public partial class Mobile : IHued, IComparable<Mobile>, ISpawnable, IObjectPro
 
                         if (DragEffects && map != null && root is null or Item)
                         {
-                            var eable = map.GetClientsInRange(from.Location);
                             var rootItem = root as Item;
 
-                            Span<byte> buffer = stackalloc byte[OutgoingPlayerPackets.DragEffectPacketLength].InitializePacket();
+                            Span<byte> buffer = stackalloc byte[OutgoingPlayerPackets.DragEffectPacketLength]
+                                .InitializePacket();
 
-                            foreach (var ns in eable)
+                            foreach (var ns in map.GetClientsInRange(from.Location))
                             {
                                 if (ns.Mobile != from && ns.Mobile.CanSee(from) && ns.Mobile.InLOS(from) &&
                                     ns.Mobile.CanSee(root))
@@ -5084,8 +5094,6 @@ public partial class Mobile : IHued, IComparable<Mobile>, ISpawnable, IObjectPro
                                     ns.Send(buffer);
                                 }
                             }
-
-                            eable.Free();
                         }
 
                         var fixLoc = item.Location;
@@ -5220,11 +5228,9 @@ public partial class Mobile : IHued, IComparable<Mobile>, ISpawnable, IObjectPro
             return;
         }
 
-        var eable = map.GetClientsInRange(m_Location);
-
         Span<byte> buffer = stackalloc byte[OutgoingPlayerPackets.DragEffectPacketLength].InitializePacket();
 
-        foreach (var ns in eable)
+        foreach (var ns in map.GetClientsInRange(m_Location))
         {
             if (ns.StygianAbyss || ns.Mobile == this ||
                 !ns.Mobile.CanSee(this) || !ns.Mobile.InLOS(this) || !ns.Mobile.CanSee(root))
@@ -5245,8 +5251,6 @@ public partial class Mobile : IHued, IComparable<Mobile>, ISpawnable, IObjectPro
 
             ns.Send(buffer);
         }
-
-        eable.Free();
     }
 
     public virtual bool Drop(Item to, Point3D loc)
@@ -5527,44 +5531,27 @@ public partial class Mobile : IHued, IComparable<Mobile>, ISpawnable, IObjectPro
 
         if (m_Map != null)
         {
-            var eable = m_Map.GetObjectsInRange(m_Location, range);
-
-            foreach (var o in eable)
+            foreach (var heard in m_Map.GetMobilesInRange(m_Location, range))
             {
-                if (o is Mobile heard)
+                if (!heard.CanSee(this) || !NoSpeechLOS && heard.Player && !heard.InLOS(this))
                 {
-                    if (!heard.CanSee(this) || !NoSpeechLOS && heard.Player && !heard.InLOS(this))
-                    {
-                        continue;
-                    }
-
-                    if (heard.m_NetState != null)
-                    {
-                        hears.Add(heard);
-                    }
-
-                    if (heard.HandlesOnSpeech(this))
-                    {
-                        onSpeech.Add(heard);
-                    }
-
-                    for (var i = 0; i < heard.Items.Count; ++i)
-                    {
-                        var item = heard.Items[i];
-
-                        if (item.HandlesOnSpeech)
-                        {
-                            onSpeech.Add(item);
-                        }
-
-                        if (item is Container container)
-                        {
-                            AddSpeechItemsFrom(onSpeech, container);
-                        }
-                    }
+                    continue;
                 }
-                else if (o is Item item)
+
+                if (heard.m_NetState != null)
                 {
+                    hears.Add(heard);
+                }
+
+                if (heard.HandlesOnSpeech(this))
+                {
+                    onSpeech.Add(heard);
+                }
+
+                for (var i = 0; i < heard.Items.Count; ++i)
+                {
+                    var item = heard.Items[i];
+
                     if (item.HandlesOnSpeech)
                     {
                         onSpeech.Add(item);
@@ -5577,7 +5564,18 @@ public partial class Mobile : IHued, IComparable<Mobile>, ISpawnable, IObjectPro
                 }
             }
 
-            eable.Free();
+            foreach (var item in m_Map.GetItemsInRange(m_Location, range))
+            {
+                if (item.HandlesOnSpeech)
+                {
+                    onSpeech.Add(item);
+                }
+
+                if (item is Container container)
+                {
+                    AddSpeechItemsFrom(onSpeech, container);
+                }
+            }
 
             object mutateContext = null;
             var mutatedText = text;
@@ -5593,7 +5591,8 @@ public partial class Mobile : IHued, IComparable<Mobile>, ISpawnable, IObjectPro
             ProcessDelta();
 
             Span<byte> regBuffer = stackalloc byte[OutgoingMessagePackets.GetMaxMessageLength(text)].InitializePacket();
-            Span<byte> mutBuffer = stackalloc byte[OutgoingMessagePackets.GetMaxMessageLength(mutatedText)].InitializePacket();
+            Span<byte> mutBuffer =
+                stackalloc byte[OutgoingMessagePackets.GetMaxMessageLength(mutatedText)].InitializePacket();
 
             // TODO: Should this be sorted like onSpeech is below?
             for (var i = 0; i < hears.Count; ++i)
@@ -5603,7 +5602,16 @@ public partial class Mobile : IHued, IComparable<Mobile>, ISpawnable, IObjectPro
                 if (mutatedArgs == null || !CheckHearsMutatedSpeech(heard, mutateContext))
                 {
                     var length = OutgoingMessagePackets.CreateMessage(
-                        regBuffer, Serial, Body, type, hue, 3, false, m_Language, Name, text
+                        regBuffer,
+                        Serial,
+                        Body,
+                        type,
+                        hue,
+                        3,
+                        false,
+                        m_Language,
+                        Name,
+                        text
                     );
 
                     if (length != regBuffer.Length)
@@ -5617,7 +5625,16 @@ public partial class Mobile : IHued, IComparable<Mobile>, ISpawnable, IObjectPro
                 else
                 {
                     var length = OutgoingMessagePackets.CreateMessage(
-                        mutBuffer, Serial, Body, type, hue, 3, false, m_Language, Name, mutatedText
+                        mutBuffer,
+                        Serial,
+                        Body,
+                        type,
+                        hue,
+                        3,
+                        false,
+                        m_Language,
+                        Name,
+                        mutatedText
                     );
 
                     if (length != mutBuffer.Length)
@@ -5859,7 +5876,7 @@ public partial class Mobile : IHued, IComparable<Mobile>, ISpawnable, IObjectPro
 
     public virtual bool CanBeDamaged() => !m_Blessed;
 
-    public virtual void Damage(int amount, Mobile from = null, bool informMount = true)
+    public virtual void Damage(int amount, Mobile from = null, bool informMount = true, bool ignoreEvilOmen = false)
     {
         if (amount <= 0)
         {
@@ -5966,17 +5983,13 @@ public partial class Mobile : IHued, IComparable<Mobile>, ISpawnable, IObjectPro
             return;
         }
 
-        var eable = map.GetClientsInRange(m_Location);
-
-        foreach (var ns in eable)
+        foreach (var ns in map.GetClientsInRange(m_Location))
         {
             if (ns.Mobile.CanSee(this))
             {
                 ns.SendDamage(Serial, amount);
             }
         }
-
-        eable.Free();
     }
 
     public void SendVisibleDamageSelective(Mobile from, int amount)
@@ -6096,12 +6109,14 @@ public partial class Mobile : IHued, IComparable<Mobile>, ISpawnable, IObjectPro
 
                     if ((hairflag & 0x01) != 0)
                     {
-                        m_Hair = new HairInfo(reader);
+                        _hair = new VirtualHairInfo();
+                        _hair.Deserialize(reader);
                     }
 
                     if ((hairflag & 0x02) != 0)
                     {
-                        m_FacialHair = new FacialHairInfo(reader);
+                        _facialHair = new VirtualHairInfo();
+                        _facialHair.Deserialize(reader);
                     }
 
                     goto case 29;
@@ -6514,26 +6529,12 @@ public partial class Mobile : IHued, IComparable<Mobile>, ISpawnable, IObjectPro
 
     public virtual bool CanPaperdollBeOpenedBy(Mobile from) => Body.IsHuman || Body.IsGhost || IsBodyMod;
 
-    public virtual void GetChildContextMenuEntries(Mobile from, List<ContextMenuEntry> list, Item item)
+    public virtual void GetChildContextMenuEntries(Mobile from, ref PooledRefList<ContextMenuEntry> list, Item item)
     {
     }
 
-    public virtual void GetContextMenuEntries(Mobile from, List<ContextMenuEntry> list)
+    public virtual void GetContextMenuEntries(Mobile from, ref PooledRefList<ContextMenuEntry> list)
     {
-        if (Deleted)
-        {
-            return;
-        }
-
-        if (CanPaperdollBeOpenedBy(from))
-        {
-            list.Add(new PaperdollEntry(this));
-        }
-
-        if (from == this && Backpack != null && CanSee(Backpack) && CheckAlive(false))
-        {
-            list.Add(new OpenBackpackEntry(this));
-        }
     }
 
     public void Internalize()
@@ -6682,11 +6683,9 @@ public partial class Mobile : IHued, IComparable<Mobile>, ISpawnable, IObjectPro
 
         ProcessDelta();
 
-        var eable = map.GetClientsInRange(m_Location);
-
         Span<byte> buffer = stackalloc byte[OutgoingMobilePackets.MobileAnimationPacketLength].InitializePacket();
 
-        foreach (var state in eable)
+        foreach (var state in map.GetClientsInRange(m_Location))
         {
             if (!state.Mobile.CanSee(this))
             {
@@ -6737,8 +6736,6 @@ public partial class Mobile : IHued, IComparable<Mobile>, ISpawnable, IObjectPro
 
             state.Send(buffer);
         }
-
-        eable.Free();
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -6765,9 +6762,7 @@ public partial class Mobile : IHued, IComparable<Mobile>, ISpawnable, IObjectPro
 
         Span<byte> buffer = stackalloc byte[OutgoingEffectPackets.SoundPacketLength].InitializePacket();
 
-        var eable = m_Map.GetClientsInRange(m_Location);
-
-        foreach (var state in eable)
+        foreach (var state in m_Map.GetClientsInRange(m_Location))
         {
             if (state.Mobile.CanSee(this))
             {
@@ -6775,8 +6770,6 @@ public partial class Mobile : IHued, IComparable<Mobile>, ISpawnable, IObjectPro
                 state.Send(buffer);
             }
         }
-
-        eable.Free();
     }
 
     public virtual void SendOPLPacketTo(NetState ns)
@@ -6817,11 +6810,9 @@ public partial class Mobile : IHued, IComparable<Mobile>, ISpawnable, IObjectPro
             return;
         }
 
-        var eable = m_Map.GetClientsInRange(m_Location);
-
         Span<byte> removeEntity = stackalloc byte[OutgoingEntityPackets.RemoveEntityLength].InitializePacket();
 
-        foreach (var state in eable)
+        foreach (var state in m_Map.GetClientsInRange(m_Location))
         {
             if (state != m_NetState && (everyone || !state.Mobile.CanSee(this)))
             {
@@ -6829,8 +6820,6 @@ public partial class Mobile : IHued, IComparable<Mobile>, ISpawnable, IObjectPro
                 state.Send(removeEntity);
             }
         }
-
-        eable.Free();
     }
 
     public void ClearScreen()
@@ -6840,27 +6829,21 @@ public partial class Mobile : IHued, IComparable<Mobile>, ISpawnable, IObjectPro
             return;
         }
 
-        var eable = m_Map.GetObjectsInRange(m_Location, Core.GlobalMaxUpdateRange);
-
-        foreach (var o in eable)
+        foreach (var m in m_Map.GetMobilesInRange(m_Location, Core.GlobalMaxUpdateRange))
         {
-            if (o is Mobile m)
+            if (m != this && Utility.InUpdateRange(m_Location, m.m_Location))
             {
-                if (m != this && Utility.InUpdateRange(m_Location, m.m_Location))
-                {
-                    m_NetState.SendRemoveEntity(m.Serial);
-                }
-            }
-            else if (o is Item item)
-            {
-                if (InRange(item.Location, item.GetUpdateRange(this)))
-                {
-                    m_NetState.SendRemoveEntity(item.Serial);
-                }
+                m_NetState.SendRemoveEntity(m.Serial);
             }
         }
 
-        eable.Free();
+        foreach (var item in m_Map.GetItemsInRange(m_Location, Core.GlobalMaxUpdateRange))
+        {
+            if (InRange(item.Location, item.GetUpdateRange(this)))
+            {
+                m_NetState.SendRemoveEntity(item.Serial);
+            }
+        }
     }
 
     /// <summary>
@@ -6909,40 +6892,46 @@ public partial class Mobile : IHued, IComparable<Mobile>, ISpawnable, IObjectPro
             return;
         }
 
-        var eable = m_Map.GetObjectsInRange(m_Location, Core.GlobalMaxUpdateRange);
-
-        foreach (var o in eable)
+        foreach (var m in m_Map.GetMobilesInRange(m_Location, Core.GlobalMaxUpdateRange))
         {
-            if (o is Item item)
+            if (CanSee(m) && Utility.InUpdateRange(m_Location, m.m_Location))
             {
-                if (CanSee(item) && InRange(item.Location, item.GetUpdateRange(this)))
+                ns.SendMobileIncoming(this, m);
+
+                if (ns.StygianAbyss)
                 {
-                    item.SendInfoTo(ns);
+                    ns.SendMobileHealthbar(m, Healthbar.Yellow);
+                    ns.SendMobileHealthbar(m, Healthbar.Poison);
                 }
-            }
-            else if (o is Mobile m)
-            {
-                if (CanSee(m) && Utility.InUpdateRange(m_Location, m.m_Location))
+
+                if (m.IsDeadBondedPet)
                 {
-                    ns.SendMobileIncoming(this, m);
-
-                    if (ns.StygianAbyss)
-                    {
-                        ns.SendMobileHealthbar(m, Healthbar.Poison);
-                        ns.SendMobileHealthbar(m, Healthbar.Yellow);
-                    }
-
-                    if (m.IsDeadBondedPet)
-                    {
-                        ns.SendBondedStatus(m.Serial, true);
-                    }
-
-                    m.SendOPLPacketTo(ns);
+                    ns.SendBondedStatus(m.Serial, true);
                 }
+
+                m.SendOPLPacketTo(ns);
             }
         }
 
-        eable.Free();
+        foreach (var item in m_Map.GetItemsInRange(m_Location, Core.GlobalMaxUpdateRange))
+        {
+            if (CanSee(item) && InRange(item.Location, item.GetUpdateRange(this)))
+            {
+                item.SendInfoTo(ns);
+            }
+        }
+
+        var range = new Rectangle2D(
+            m_Location.X - Core.GlobalMaxUpdateRange,
+            m_Location.Y - Core.GlobalMaxUpdateRange,
+            Core.GlobalMaxUpdateRange * 2 + 1,
+            Core.GlobalMaxUpdateRange * 2 + 1
+        );
+
+        foreach (var multi in m_Map.GetMultisInBounds(range))
+        {
+            multi.SendInfoTo(ns);
+        }
     }
 
     public void UpdateRegion()
@@ -7054,11 +7043,9 @@ public partial class Mobile : IHued, IComparable<Mobile>, ISpawnable, IObjectPro
             return;
         }
 
-        var eable = m_Map.GetClientsInRange(m_Location);
-
         Span<byte> removeEntity = stackalloc byte[OutgoingEntityPackets.RemoveEntityLength].InitializePacket();
 
-        foreach (var state in eable)
+        foreach (var state in m_Map.GetClientsInRange(m_Location))
         {
             var m = state.Mobile;
             if (!m.CanSee(this))
@@ -7078,8 +7065,6 @@ public partial class Mobile : IHued, IComparable<Mobile>, ISpawnable, IObjectPro
                 SendOPLPacketTo(state);
             }
         }
-
-        eable.Free();
     }
 
     public virtual void OnConnected()
@@ -7261,6 +7246,7 @@ public partial class Mobile : IHued, IComparable<Mobile>, ISpawnable, IObjectPro
         }
 
         m_Location = newLocation;
+        m_Map?.OnMove(oldLocation, this);
         UpdateRegion();
 
         var box = FindBankNoCreate();
@@ -7270,14 +7256,15 @@ public partial class Mobile : IHued, IComparable<Mobile>, ISpawnable, IObjectPro
             box.Close();
         }
 
-        m_NetState?.ValidateAllTrades();
-
-        m_Map?.OnMove(oldLocation, this);
-
-        if (isTeleport && m_NetState != null && (!m_NetState.HighSeas || !NoMoveHS))
+        if (m_NetState != null)
         {
-            m_NetState.Sequence = 0;
-            m_NetState.SendMobileUpdate(this);
+            m_NetState.ValidateAllTrades();
+
+            if (isTeleport && (!m_NetState.HighSeas || !NoMoveHS))
+            {
+                m_NetState.Sequence = 0;
+                m_NetState.SendMobileUpdate(this);
+            }
         }
 
         var map = m_Map;
@@ -7285,12 +7272,9 @@ public partial class Mobile : IHued, IComparable<Mobile>, ISpawnable, IObjectPro
         if (map != null)
         {
             // First, send a remove message to everyone who can no longer see us. (inOldRange && !inNewRange)
-
-            var eable = map.GetClientsInRange(oldLocation);
-
             Span<byte> removeEntity = stackalloc byte[OutgoingEntityPackets.RemoveEntityLength].InitializePacket();
 
-            foreach (var ns in eable)
+            foreach (var ns in map.GetClientsInRange(oldLocation))
             {
                 if (ns != m_NetState && !Utility.InUpdateRange(newLocation, ns.Mobile.Location))
                 {
@@ -7299,89 +7283,84 @@ public partial class Mobile : IHued, IComparable<Mobile>, ISpawnable, IObjectPro
                 }
             }
 
-            eable.Free();
-
             var ourState = m_NetState;
 
             // Check to see if we are attached to a client
             if (ourState != null)
             {
-                var eeable = map.GetObjectsInRange(newLocation, Core.GlobalMaxUpdateRange);
-
                 // We are attached to a client, so it's a bit more complex. We need to send new items and people to ourself, and ourself to other clients
 
-                foreach (var o in eeable)
+                foreach (var m in map.GetMobilesInRange(newLocation, Core.GlobalMaxUpdateRange))
                 {
-                    if (o is Item item)
+                    if (m == this)
                     {
-                        var range = item.GetUpdateRange(this);
-                        var loc = item.Location;
-
-                        if (!Utility.InRange(oldLocation, loc, range) && Utility.InRange(newLocation, loc, range) &&
-                            CanSee(item))
-                        {
-                            item.SendInfoTo(ourState);
-                        }
+                        continue;
                     }
-                    else if (o != this && o is Mobile m)
+
+                    if (!Utility.InUpdateRange(newLocation, m.m_Location))
                     {
-                        if (!Utility.InUpdateRange(newLocation, m.m_Location))
-                        {
-                            continue;
-                        }
-
-                        var inOldRange = Utility.InUpdateRange(oldLocation, m.m_Location);
-                        var ns = m.m_NetState;
-
-                        if (ns != null &&
-                            (isTeleport && (!ns.HighSeas || !NoMoveHS) || !inOldRange) && m.CanSee(this))
-                        {
-                            ns.SendMobileIncoming(m, this);
-
-                            if (ns.StygianAbyss)
-                            {
-                                ns.SendMobileHealthbar(this, Healthbar.Poison);
-                                ns.SendMobileHealthbar(this, Healthbar.Yellow);
-                            }
-
-                            if (IsDeadBondedPet)
-                            {
-                                ns.SendBondedStatus(Serial, true);
-                            }
-
-                            SendOPLPacketTo(ns);
-                        }
-
-                        if (inOldRange || !CanSee(m))
-                        {
-                            continue;
-                        }
-
-                        ourState.SendMobileIncoming(this, m);
-
-                        if (ourState.StygianAbyss)
-                        {
-                            ourState.SendMobileHealthbar(m, Healthbar.Poison);
-                            ourState.SendMobileHealthbar(m, Healthbar.Yellow);
-                        }
-
-                        if (m.IsDeadBondedPet)
-                        {
-                            ourState.SendBondedStatus(m.Serial, true);
-                        }
-
-                        m.SendOPLPacketTo(ourState);
+                        continue;
                     }
+
+                    var inOldRange = Utility.InUpdateRange(oldLocation, m.m_Location);
+                    var ns = m.m_NetState;
+
+                    if (ns != null &&
+                        (isTeleport && (!ns.HighSeas || !NoMoveHS) || !inOldRange) && m.CanSee(this))
+                    {
+                        ns.SendMobileIncoming(m, this);
+
+                        if (ns.StygianAbyss)
+                        {
+                            ns.SendMobileHealthbar(this, Healthbar.Poison);
+                            ns.SendMobileHealthbar(this, Healthbar.Yellow);
+                        }
+
+                        if (IsDeadBondedPet)
+                        {
+                            ns.SendBondedStatus(Serial, true);
+                        }
+
+                        SendOPLPacketTo(ns);
+                    }
+
+                    if (inOldRange || !CanSee(m))
+                    {
+                        continue;
+                    }
+
+                    ourState.SendMobileIncoming(this, m);
+
+                    if (ourState.StygianAbyss)
+                    {
+                        ourState.SendMobileHealthbar(m, Healthbar.Poison);
+                        ourState.SendMobileHealthbar(m, Healthbar.Yellow);
+                    }
+
+                    if (m.IsDeadBondedPet)
+                    {
+                        ourState.SendBondedStatus(m.Serial, true);
+                    }
+
+                    m.SendOPLPacketTo(ourState);
                 }
 
-                eeable.Free();
+                foreach (var item in map.GetItemsInRange(newLocation, Core.GlobalMaxUpdateRange))
+                {
+                    var range = item.GetUpdateRange(this);
+                    var loc = item.Location;
+
+                    if (!Utility.InRange(oldLocation, loc, range) && Utility.InRange(newLocation, loc, range) &&
+                        CanSee(item))
+                    {
+                        item.SendInfoTo(ourState);
+                    }
+                }
             }
             else
             {
-                eable = map.GetClientsInRange(newLocation);
-
                 // We're not attached to a client, so simply send an Incoming
-                foreach (var ns in eable)
+                foreach (var ns in map.GetClientsInRange(newLocation))
                 {
                     var m = ns.Mobile;
                     if ((isTeleport && (!ns.HighSeas || !NoMoveHS) || !Utility.InUpdateRange(oldLocation, m.Location)) &&
@@ -7403,8 +7382,6 @@ public partial class Mobile : IHued, IComparable<Mobile>, ISpawnable, IObjectPro
                         SendOPLPacketTo(ns);
                     }
                 }
-
-                eable.Free();
             }
         }
 
@@ -7463,9 +7440,7 @@ public partial class Mobile : IHued, IComparable<Mobile>, ISpawnable, IObjectPro
             return;
         }
 
-        var eable = m_Map.GetClientsInRange(m_Location);
-
-        foreach (var state in eable)
+        foreach (var state in m_Map.GetClientsInRange(m_Location))
         {
             var m = state.Mobile;
             if (m.CanSee(this))
@@ -7486,8 +7461,6 @@ public partial class Mobile : IHued, IComparable<Mobile>, ISpawnable, IObjectPro
                 SendOPLPacketTo(state);
             }
         }
-
-        eable.Free();
     }
 
     public bool PlaceInBackpack(Item item) =>
@@ -8001,7 +7974,7 @@ public partial class Mobile : IHued, IComparable<Mobile>, ISpawnable, IObjectPro
     }
 
     /// <summary>
-    ///     Overridable. Virtual event invoked when the sector this Mobile is in gets <see cref="Sector.Activate">activated</see>.
+    ///     Overridable. Virtual event invoked when the sector this Mobile is in gets <see cref="Map.Sector.Activate">activated</see>.
     /// </summary>
     public virtual void OnSectorActivate()
     {
@@ -8009,7 +7982,7 @@ public partial class Mobile : IHued, IComparable<Mobile>, ISpawnable, IObjectPro
 
     /// <summary>
     ///     Overridable. Virtual event invoked when the sector this Mobile is in gets
-    ///     <see cref="Sector.Deactivate">deactivated</see>.
+    ///     <see cref="Map.Sector.Deactivate">deactivated</see>.
     /// </summary>
     public virtual void OnSectorDeactivate()
     {
@@ -8093,21 +8066,42 @@ public partial class Mobile : IHued, IComparable<Mobile>, ISpawnable, IObjectPro
         return -1;
     }
 
-    public IPooledEnumerable<Item> GetItemsInRange(int range) => GetItemsInRange<Item>(range);
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public Map.ItemAtEnumerable<Item> GetItemsAt() =>
+        m_Map == null ? Map.ItemAtEnumerable<Item>.Empty : m_Map.GetItemsAt(m_Location);
 
-    public IPooledEnumerable<T> GetItemsInRange<T>(int range) where T : Item =>
-        m_Map?.GetItemsInRange<T>(m_Location, range) ?? Map.NullEnumerable<T>.Instance;
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public Map.ItemAtEnumerable<T> GetItemsAt<T>() where T : Item =>
+        m_Map == null ? Map.ItemAtEnumerable<T>.Empty : m_Map.GetItemsAt<T>(m_Location);
 
-    public IPooledEnumerable<IEntity> GetObjectsInRange(int range) =>
-        m_Map?.GetObjectsInRange(m_Location, range) ?? Map.NullEnumerable<IEntity>.Instance;
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public Map.ItemBoundsEnumerable<Item> GetItemsInRange(int range) => GetItemsInRange<Item>(range);
 
-    public IPooledEnumerable<Mobile> GetMobilesInRange(int range) => GetMobilesInRange<Mobile>(range);
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public Map.ItemBoundsEnumerable<T> GetItemsInRange<T>(int range) where T : Item =>
+        m_Map == null ? Map.ItemBoundsEnumerable<T>.Empty : m_Map.GetItemsInRange<T>(m_Location, range);
 
-    public IPooledEnumerable<T> GetMobilesInRange<T>(int range) where T : Mobile =>
-        m_Map?.GetMobilesInRange<T>(m_Location, range) ?? Map.NullEnumerable<T>.Instance;
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public Map.MobileAtEnumerable<Mobile> GetMobilesInRange() => GetMobilesInRange<Mobile>();
 
-    public IPooledEnumerable<NetState> GetClientsInRange(int range) =>
-        m_Map?.GetClientsInRange(m_Location, range) ?? Map.NullEnumerable<NetState>.Instance;
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public Map.MobileAtEnumerable<T> GetMobilesInRange<T>() where T : Mobile =>
+        m_Map == null ? Map.MobileAtEnumerable<T>.Empty : m_Map.GetMobilesAt<T>(m_Location);
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public Map.MobileBoundsEnumerable<Mobile> GetMobilesInRange(int range) => GetMobilesInRange<Mobile>(range);
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public Map.MobileBoundsEnumerable<T> GetMobilesInRange<T>(int range) where T : Mobile =>
+        m_Map == null ? Map.MobileBoundsEnumerable<T>.Empty : m_Map.GetMobilesInRange<T>(m_Location, range);
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public Map.ClientAtEnumerable GetClientsAt() =>
+        m_Map == null ? Map.ClientAtEnumerable.Empty : Map.GetClientsAt(m_Location);
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public Map.ClientBoundsEnumerable GetClientsInRange(int range) =>
+        m_Map == null ? Map.ClientBoundsEnumerable.Empty : Map.GetClientsInRange(m_Location, range);
 
     public void SayTo(Mobile to, bool ascii, string text) =>
         PrivateOverheadMessage(MessageType.Regular, SpeechHue, ascii, text, to.NetState);
@@ -8149,63 +8143,6 @@ public partial class Mobile : IHued, IComparable<Mobile>, ISpawnable, IObjectPro
         }
 
         return false;
-    }
-
-    public Gump FindGump<T>() where T : Gump => m_NetState?.Gumps.Find(g => g is T);
-
-    public bool CloseGump<T>() where T : Gump
-    {
-        if (m_NetState == null)
-        {
-            return false;
-        }
-
-        var gump = FindGump<T>();
-
-        if (gump != null)
-        {
-            m_NetState.SendCloseGump(gump.TypeID, 0);
-            m_NetState.RemoveGump(gump);
-            gump.OnServerClose(m_NetState);
-        }
-
-        return true;
-    }
-
-    public bool CloseAllGumps()
-    {
-        var ns = m_NetState;
-
-        if (ns.CannotSendPackets())
-        {
-            return false;
-        }
-
-        var gumps = new List<Gump>(ns.Gumps);
-
-        ns.ClearGumps();
-
-        foreach (var gump in gumps)
-        {
-            ns.SendCloseGump(gump.TypeID, 0);
-
-            gump.OnServerClose(ns);
-        }
-
-        return true;
-    }
-
-    public bool HasGump<T>() where T : Gump => FindGump<T>() != null;
-
-    public bool SendGump(Gump g)
-    {
-        if (m_NetState == null)
-        {
-            return false;
-        }
-
-        g.SendTo(m_NetState);
-        return true;
     }
 
     public bool SendMenu(IMenu m)
@@ -8901,7 +8838,12 @@ public partial class Mobile : IHued, IComparable<Mobile>, ISpawnable, IObjectPro
             };
         }
 
-        return ret | (run ? Direction.Running : 0);
+        if (run)
+        {
+            ret |= Direction.Running;
+        }
+
+        return ret;
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -8926,9 +8868,7 @@ public partial class Mobile : IHued, IComparable<Mobile>, ISpawnable, IObjectPro
 
         Span<byte> buffer = stackalloc byte[OutgoingMessagePackets.GetMaxMessageLength(text)].InitializePacket();
 
-        var eable = m_Map.GetClientsInRange(m_Location);
-
-        foreach (var state in eable)
+        foreach (var state in m_Map.GetClientsInRange(m_Location))
         {
             if (
                 state.Mobile.AccessLevel >= accessLevel &&
@@ -8937,7 +8877,16 @@ public partial class Mobile : IHued, IComparable<Mobile>, ISpawnable, IObjectPro
             )
             {
                 var length = OutgoingMessagePackets.CreateMessage(
-                    buffer, Serial, Body, type, hue, 3, ascii, Language, Name, text
+                    buffer,
+                    Serial,
+                    Body,
+                    type,
+                    hue,
+                    3,
+                    ascii,
+                    Language,
+                    Name,
+                    text
                 );
 
                 if (length != buffer.Length)
@@ -8948,8 +8897,6 @@ public partial class Mobile : IHued, IComparable<Mobile>, ISpawnable, IObjectPro
                 state.Send(buffer);
             }
         }
-
-        eable.Free();
     }
 
     public void PublicOverheadMessage(MessageType type, int hue, int number, string args = "", bool noLineOfSight = true)
@@ -8961,14 +8908,20 @@ public partial class Mobile : IHued, IComparable<Mobile>, ISpawnable, IObjectPro
 
         Span<byte> buffer = stackalloc byte[OutgoingMessagePackets.GetMaxMessageLocalizedLength(args)].InitializePacket();
 
-        var eable = m_Map.GetClientsInRange(m_Location);
-
-        foreach (var state in eable)
+        foreach (var state in m_Map.GetClientsInRange(m_Location))
         {
             if (state.Mobile.CanSee(this) && (noLineOfSight || state.Mobile.InLOS(this)))
             {
                 var length = OutgoingMessagePackets.CreateMessageLocalized(
-                    buffer, Serial, Body, type, hue, 3, number, Name, args
+                    buffer,
+                    Serial,
+                    Body,
+                    type,
+                    hue,
+                    3,
+                    number,
+                    Name,
+                    args
                 );
 
                 if (length != buffer.Length)
@@ -8979,8 +8932,6 @@ public partial class Mobile : IHued, IComparable<Mobile>, ISpawnable, IObjectPro
                 state.Send(buffer);
             }
         }
-
-        eable.Free();
     }
 
     public void PublicOverheadMessage(
@@ -8994,11 +8945,10 @@ public partial class Mobile : IHued, IComparable<Mobile>, ISpawnable, IObjectPro
             return;
         }
 
-        Span<byte> buffer = stackalloc byte[OutgoingMessagePackets.GetMaxMessageLocalizedAffixLength(affix, args)].InitializePacket();
+        Span<byte> buffer = stackalloc byte[OutgoingMessagePackets.GetMaxMessageLocalizedAffixLength(affix, args)]
+            .InitializePacket();
 
-        var eable = m_Map.GetClientsInRange(m_Location);
-
-        foreach (var state in eable)
+        foreach (var state in m_Map.GetClientsInRange(m_Location))
         {
             if (
                 state.Mobile.AccessLevel >= accessLevel &&
@@ -9007,7 +8957,17 @@ public partial class Mobile : IHued, IComparable<Mobile>, ISpawnable, IObjectPro
             )
             {
                 var length = OutgoingMessagePackets.CreateMessageLocalizedAffix(
-                    buffer, Serial, Body, type, hue, 3, number, Name, affixType, affix, args
+                    buffer,
+                    Serial,
+                    Body,
+                    type,
+                    hue,
+                    3,
+                    number,
+                    Name,
+                    affixType,
+                    affix,
+                    args
                 );
 
                 if (length != buffer.Length)
@@ -9018,8 +8978,6 @@ public partial class Mobile : IHued, IComparable<Mobile>, ISpawnable, IObjectPro
                 state.Send(buffer);
             }
         }
-
-        eable.Free();
     }
 
     public void PrivateOverheadMessage(MessageType type, int hue, bool ascii, string text, NetState state)
@@ -9048,14 +9006,20 @@ public partial class Mobile : IHued, IComparable<Mobile>, ISpawnable, IObjectPro
 
         Span<byte> buffer = stackalloc byte[OutgoingMessagePackets.GetMaxMessageLocalizedLength(args)].InitializePacket();
 
-        var eable = m_Map.GetClientsInRange(m_Location);
-
-        foreach (var state in eable)
+        foreach (var state in m_Map.GetClientsInRange(m_Location))
         {
             if (state != m_NetState && state.Mobile.CanSee(this))
             {
                 var length = OutgoingMessagePackets.CreateMessageLocalized(
-                    buffer, Serial, Body, type, hue, 3, number, Name, args
+                    buffer,
+                    Serial,
+                    Body,
+                    type,
+                    hue,
+                    3,
+                    number,
+                    Name,
+                    args
                 );
 
                 if (length != buffer.Length)
@@ -9066,8 +9030,6 @@ public partial class Mobile : IHued, IComparable<Mobile>, ISpawnable, IObjectPro
                 state.Send(buffer);
             }
         }
-
-        eable.Free();
     }
 
     public void NonlocalOverheadMessage(MessageType type, int hue, bool ascii, string text)
@@ -9079,14 +9041,21 @@ public partial class Mobile : IHued, IComparable<Mobile>, ISpawnable, IObjectPro
 
         Span<byte> buffer = stackalloc byte[OutgoingMessagePackets.GetMaxMessageLength(text)].InitializePacket();
 
-        var eable = m_Map.GetClientsInRange(m_Location);
-
-        foreach (var state in eable)
+        foreach (var state in m_Map.GetClientsInRange(m_Location))
         {
             if (state != m_NetState && state.Mobile.CanSee(this))
             {
                 var length = OutgoingMessagePackets.CreateMessage(
-                    buffer, Serial, Body, type, hue, 3, ascii, Language, Name, text
+                    buffer,
+                    Serial,
+                    Body,
+                    type,
+                    hue,
+                    3,
+                    ascii,
+                    Language,
+                    Name,
+                    text
                 );
 
                 if (length != buffer.Length)
@@ -9097,8 +9066,6 @@ public partial class Mobile : IHued, IComparable<Mobile>, ISpawnable, IObjectPro
                 state.Send(buffer);
             }
         }
-
-        eable.Free();
     }
 
     public void SendLocalizedMessage(int number, string args = "", int hue = 0x3B2) =>

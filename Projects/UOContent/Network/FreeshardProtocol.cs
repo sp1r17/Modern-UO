@@ -13,6 +13,9 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>. *
  *************************************************************************/
 
+using System.Buffers;
+using System.Runtime.CompilerServices;
+
 namespace Server.Network
 {
     public static class FreeshardProtocol
@@ -25,8 +28,14 @@ namespace Server.Network
             _handlers = ProtocolExtensions<FreeshardProtocolInfo>.Register(new FreeshardProtocolInfo());
         }
 
-        public static unsafe void Register(int cmd, bool ingame, delegate*<NetState, CircularBufferReader, int, void> onReceive) =>
-            _handlers[cmd] = new PacketHandler(cmd, 0, ingame, onReceive);
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static unsafe void Register(int cmd, bool ingame, delegate*<NetState, SpanReader, void> onReceive) =>
+            Register(cmd, ingame, false, onReceive);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static unsafe void Register(
+            int cmd, bool ingame, bool outgame, delegate*<NetState, SpanReader, void> onReceive
+        ) => _handlers[cmd] = new PacketHandler(cmd, onReceive, inGameOnly: ingame, outGameOnly: outgame);
 
         private struct FreeshardProtocolInfo : IProtocolExtensionsInfo
         {

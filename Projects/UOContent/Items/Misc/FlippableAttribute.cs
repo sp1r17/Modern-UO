@@ -5,7 +5,7 @@ namespace Server.Items;
 
 public static class FlipCommandHandlers
 {
-    public static void Initialize()
+    public static void Configure()
     {
         CommandSystem.Register("Flip", AccessLevel.GameMaster, Flip_OnCommand);
     }
@@ -59,7 +59,7 @@ public class FlippableAttribute : Attribute
 
     public virtual void Flip(Item item)
     {
-        if (ItemIDs == null)
+        if (ItemIDs == null || ItemIDs.Length == 0)
         {
             try
             {

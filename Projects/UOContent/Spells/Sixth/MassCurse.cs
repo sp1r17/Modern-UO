@@ -1,6 +1,6 @@
 namespace Server.Spells.Sixth
 {
-    public class MassCurseSpell : MagerySpell, ISpellTargetingPoint3D
+    public class MassCurseSpell : MagerySpell, ITargetingSpell<IPoint3D>
     {
         private static readonly SpellInfo _info = new(
             "Mass Curse",
@@ -32,9 +32,7 @@ namespace Server.Spells.Sixth
 
                 if (map != null)
                 {
-                    var eable = map.GetMobilesInRange(new Point3D(p), 2);
-
-                    foreach (var m in eable)
+                    foreach (var m in map.GetMobilesInRange(new Point3D(p), 2))
                     {
                         if (Core.AOS && (m == Caster || !SpellHelper.ValidIndirectTarget(Caster, m) || !Caster.CanSee(m) ||
                                          !Caster.CanBeHarmful(m, false)))
@@ -54,17 +52,13 @@ namespace Server.Spells.Sixth
 
                         HarmfulSpell(m);
                     }
-
-                    eable.Free();
                 }
             }
-
-            FinishSequence();
         }
 
         public override void OnCast()
         {
-            Caster.Target = new SpellTargetPoint3D(this, range: Core.ML ? 10 : 12);
+            Caster.Target = new SpellTarget<IPoint3D>(this, allowGround: true);
         }
     }
 }

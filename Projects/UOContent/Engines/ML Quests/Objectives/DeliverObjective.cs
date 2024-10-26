@@ -1,10 +1,8 @@
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using Server.Gumps;
 using Server.Items;
 using Server.Logging;
-using Server.Utilities;
 
 namespace Server.Engines.MLQuests.Objectives
 {
@@ -76,7 +74,7 @@ namespace Server.Engines.MLQuests.Objectives
         {
             var amount = Amount.ToString();
 
-            g.AddHtmlLocalized(98, y, 312, 16, 1072207, 0x15F90); // Deliver
+            g.AddHtmlLocalized(98, y, 312, 16, 1072207, 0x5F90); // Deliver
             g.AddLabel(143, y, 0x481, amount);
 
             if (Name.Number > 0)
@@ -91,7 +89,7 @@ namespace Server.Engines.MLQuests.Objectives
 
             y += 32;
 
-            g.AddHtmlLocalized(103, y, 120, 16, 1072379, 0x15F90); // Deliver to
+            g.AddHtmlLocalized(103, y, 120, 16, 1072379, 0x5F90); // Deliver to
             g.AddLabel(223, y, 0x481, QuesterNameAttribute.GetQuesterNameFor(Destination));
 
             y += 16;
@@ -150,8 +148,16 @@ namespace Server.Engines.MLQuests.Objectives
                 return 0;
             }
 
-            var items = pack.FindItemsByType(Objective.Delivery, false); // Note: subclasses are included
-            return items.Sum(item => item.Amount);
+            var total = 0;
+            foreach (var item in pack.FindItems(false))
+            {
+                if (ClaimTypePredicate(item))
+                {
+                    total += item.Amount;
+                }
+            }
+
+            return total;
         }
 
         public override bool OnBeforeClaimReward()
@@ -171,6 +177,9 @@ namespace Server.Engines.MLQuests.Objectives
             return true;
         }
 
+        // Note: subclasses are included
+        private bool ClaimTypePredicate(Item item) => Objective.Delivery.IsInstanceOfType(item);
+
         // TODO: This is VERY similar to CollectObjective.OnClaimReward
         public override void OnClaimReward()
         {
@@ -181,10 +190,9 @@ namespace Server.Engines.MLQuests.Objectives
                 return;
             }
 
-            var items = pack.FindItemsByType(Objective.Delivery, false);
             var left = Objective.Amount;
 
-            foreach (var item in items)
+            foreach (var item in pack.EnumerateItems(false, ClaimTypePredicate))
             {
                 if (left == 0)
                 {

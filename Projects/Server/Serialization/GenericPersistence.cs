@@ -1,6 +1,6 @@
 /*************************************************************************
  * ModernUO                                                              *
- * Copyright 2019-2023 - ModernUO Development Team                       *
+ * Copyright 2019-2024 - ModernUO Development Team                       *
  * Email: hi@modernuo.com                                                *
  * File: GenericPersistence.cs                                           *
  *                                                                       *
@@ -16,38 +16,103 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.IO.MemoryMappedFiles;
 
 namespace Server;
 
-public static class GenericPersistence
+public abstract class GenericPersistence : Persistence, IGenericSerializable
 {
-    public static void Register(
-        string name,
-        Action<IGenericWriter> serializer,
-        Action<IGenericReader> deserializer,
-        int priority = Persistence.DefaultPriority
-    )
+    public string Name { get; }
+    public string SaveFilePath { get; protected set; } // "<Folder>/<System>.bin"
+
+    public byte SerializedThread { get; set; }
+    public int SerializedPosition { get; set; }
+    public int SerializedLength { get; set; }
+
+    public GenericPersistence(string name, int priority) : base(priority)
     {
-        BufferWriter saveBuffer = null;
-
-        void Serialize()
-        {
-            saveBuffer ??= new BufferWriter(true, World.SerializedTypes);
-            saveBuffer.Seek(0, SeekOrigin.Begin);
-
-            serializer(saveBuffer);
-        }
-
-        void WriteSnapshot(string savePath)
-        {
-            string binPath = Path.Combine(savePath, name, $"{name}.bin");
-            var buffer = saveBuffer!.Buffer.AsSpan(0, (int)saveBuffer.Position);
-            AdhocPersistence.WriteSnapshot(new FileInfo(binPath), buffer);
-        }
-
-        void Deserialize(string savePath, Dictionary<ulong, string> typesDb) =>
-            AdhocPersistence.Deserialize(Path.Combine(savePath, name, $"{name}.bin"), deserializer);
-
-        Persistence.Register(name, Serialize, WriteSnapshot, Deserialize, priority);
+        Name = name;
+        SaveFilePath = Path.Combine(Name, $"{Name}.bin");
     }
+
+    public override void Serialize()
+    {
+        World.PushToCache(this);
+    }
+
+    public override void WriteSnapshot(string savePath, HashSet<Type> typeSet)
+    {
+        if (SerializedLength == 0)
+        {
+            return;
+        }
+
+        var file = Path.Combine(savePath, SaveFilePath);
+        var dir = Path.GetDirectoryName(file);
+        PathUtility.EnsureDirectory(dir);
+
+        var threads = World._threadWorkers;
+
+        using var binFs = new FileStream(file, FileMode.Create, FileAccess.Write, FileShare.None);
+
+        var thread = SerializedThread;
+        var heapStart = SerializedPosition;
+        var heapLength = SerializedLength;
+
+        binFs.Write(threads[thread].GetHeap(heapStart, heapLength));
+    }
+
+    public override unsafe void Deserialize(string savePath, Dictionary<ulong, string> typesDb)
+    {
+        // Assume savePath has the Core.BaseDirectory already prepended
+        var dataPath = Path.GetFullPath(SaveFilePath, savePath);
+        var file = new FileInfo(dataPath);
+
+        if (!file.Exists || file.Length <= 0)
+        {
+            return;
+        }
+
+        var fileLength = file.Length;
+
+        string error;
+
+        try
+        {
+            using var mmf = MemoryMappedFile.CreateFromFile(dataPath, FileMode.Open);
+            using var accessor = mmf.CreateViewStream();
+
+            byte* ptr = null;
+            accessor.SafeMemoryMappedViewHandle.AcquirePointer(ref ptr);
+            var dataReader = new UnmanagedDataReader(ptr, accessor.Length, typesDb);
+            Deserialize(dataReader);
+
+            error = dataReader.Position != fileLength
+                ? $"Serialized {fileLength} bytes, but {dataReader.Position} bytes deserialized"
+                : null;
+
+            accessor.SafeMemoryMappedViewHandle.ReleasePointer();
+        }
+        catch (Exception e)
+        {
+            error = e.ToString();
+        }
+
+        if (error != null)
+        {
+            Console.WriteLine($"***** Bad deserialize of {file.FullName} *****");
+            Console.WriteLine(error);
+
+            Console.Write("Skip this file and continue? (y/n): ");
+            var y = Console.ReadLine();
+
+            if (!y.InsensitiveEquals("y"))
+            {
+                throw new Exception("Deserialization failed.");
+            }
+        }
+    }
+
+    public abstract void Serialize(IGenericWriter writer);
+    public abstract void Deserialize(IGenericReader reader);
 }

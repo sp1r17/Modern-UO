@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text.Json.Serialization;
+using Server.Collections;
 using Server.Items;
 using Server.Json;
 using Server.Network;
@@ -27,10 +28,10 @@ namespace Server.Commands
         private const int SuccessHue = 72, WarningHue = 53, ErrorHue = 33;
         private static readonly string TeleporterJsonDataPath = Path.Combine(Core.BaseDirectory, "Data/teleporters.json");
 
-        public static void Initialize()
+        public static void Configure()
         {
-            CommandSystem.Register("TelGen", AccessLevel.Administrator, GenTeleporter_OnCommand);
-            CommandSystem.Register("TelGenDelete", AccessLevel.Administrator, TelGenDelete_OnCommand);
+            CommandSystem.Register("TelGen", AccessLevel.Developer, GenTeleporter_OnCommand);
+            CommandSystem.Register("TelGenDelete", AccessLevel.Developer, TelGenDelete_OnCommand);
         }
 
         [Usage("TelGenDelete")]
@@ -121,19 +122,20 @@ namespace Server.Commands
 
             public static int DeleteTeleporters(WorldLocation worldLocation)
             {
-                var eable = worldLocation.Map.GetItemsInRange<Teleporter>(worldLocation, 0);
-
-                var count = 0;
-                foreach (var item in eable)
+                using var queue = PooledRefQueue<Item>.Create();
+                foreach (var item in worldLocation.Map.GetItemsAt<Teleporter>(worldLocation))
                 {
-                    if (!(item is KeywordTeleporter or SkillTeleporter) && IsWithinZ(item.Z - worldLocation.Z))
+                    if (item is not (KeywordTeleporter or SkillTeleporter) && IsWithinZ(item.Z - worldLocation.Z))
                     {
-                        count++;
-                        item.Delete();
+                        queue.Enqueue(item);
                     }
                 }
 
-                eable.Free();
+                var count = queue.Count;
+                while (queue.Count > 0)
+                {
+                    queue.Dequeue().Delete();
+                }
                 return count;
             }
 

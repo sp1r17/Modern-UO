@@ -2,14 +2,14 @@ using System;
 using System.Collections.Generic;
 using Server.Items;
 using Server.Logging;
-using Server.Utilities;
 
 namespace Server.Engines.Stealables;
 
-public static class StealableArtifacts
+public class StealableArtifacts : GenericPersistence
 {
     private static readonly ILogger logger = LogFactory.GetLogger(typeof(StealableArtifacts));
 
+    private static StealableArtifacts _stealableArtifactsPersistence;
     private static bool _enabled;
     private static Type[] _typesOfEntries;
     private static StealableInstance[] _artifacts;
@@ -19,7 +19,14 @@ public static class StealableArtifacts
 
     public static void Configure()
     {
-        GenericPersistence.Register("StealableArtifacts", Serialize, Deserialize);
+        _stealableArtifactsPersistence = new StealableArtifacts();
+
+        CommandSystem.Register("GenStealArties", AccessLevel.Developer, GenStealArties_OnCommand);
+        CommandSystem.Register("RemoveStealArties", AccessLevel.Developer, RemoveStealArties_OnCommand);
+    }
+
+    public StealableArtifacts() : base("StealableArtifacts", 10)
+    {
     }
 
     private static void RemoveStealableArtifacts()
@@ -187,12 +194,6 @@ public static class StealableArtifacts
     private static int GetLampPostHue() =>
         Utility.RandomDouble() < 0.9 ? 0 : Utility.RandomList(0x455, 0x47E, 0x482, 0x486, 0x48F, 0x4F2, 0x58C, 0x66C);
 
-    public static void Initialize()
-    {
-        CommandSystem.Register("GenStealArties", AccessLevel.Administrator, GenStealArties_OnCommand);
-        CommandSystem.Register("RemoveStealArties", AccessLevel.Administrator, RemoveStealArties_OnCommand);
-    }
-
     [Usage("GenStealArties"), Description("Generates the stealable artifacts spawner.")]
     private static void GenStealArties_OnCommand(CommandEventArgs args)
     {
@@ -242,7 +243,7 @@ public static class StealableArtifacts
         }
     }
 
-    private static void Serialize(IGenericWriter writer)
+    public override void Serialize(IGenericWriter writer)
     {
         writer.WriteEncodedInt(1); // version
 
@@ -262,7 +263,7 @@ public static class StealableArtifacts
         }
     }
 
-    private static void Deserialize(IGenericReader reader)
+    public override void Deserialize(IGenericReader reader)
     {
         var version = reader.ReadEncodedInt();
 
@@ -441,7 +442,7 @@ public static class StealableArtifacts
         {
             base.Deserialize(reader);
 
-            StealableArtifacts.Deserialize(reader);
+            _stealableArtifactsPersistence.Deserialize(reader);
 
             Timer.DelayCall(Delete);
         }

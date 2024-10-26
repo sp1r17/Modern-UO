@@ -1,6 +1,6 @@
 /*************************************************************************
  * ModernUO                                                              *
- * Copyright 2019-2023 - ModernUO Development Team                       *
+ * Copyright 2019-2024 - ModernUO Development Team                       *
  * Email: hi@modernuo.com                                                *
  * File: ISerializable.cs                                                *
  *                                                                       *
@@ -14,64 +14,18 @@
  *************************************************************************/
 
 using System;
-using System.Collections.Concurrent;
-using System.IO;
 
 namespace Server;
 
-public interface ISerializable
+public interface ISerializable : IGenericSerializable
 {
-    // Should be serialized/deserialized with the index so it can be referenced by IGenericReader
+    // Should be serialized/deserialized with the index that way it can be referenced by IGenericReader
     DateTime Created { get; set; }
-
-    // Should be serialized/deserialized with the index so it can be referenced by IGenericReader
-    DateTime LastSerialized { get; protected internal set; }
-    long SavePosition { get; protected internal set; }
-    BufferWriter SaveBuffer { get; protected internal set; }
 
     Serial Serial { get; }
 
     void Deserialize(IGenericReader reader);
-    void Serialize(IGenericWriter writer);
 
     bool Deleted { get; }
     void Delete();
-
-    public void InitializeSaveBuffer(byte[] buffer, ConcurrentQueue<Type> types)
-    {
-        SaveBuffer = new BufferWriter(buffer, true, types);
-        if (World.DirtyTrackingEnabled)
-        {
-            SavePosition = SaveBuffer.Position;
-        }
-        else
-        {
-            SavePosition = -1;
-        }
-    }
-
-    public void Serialize(ConcurrentQueue<Type> types)
-    {
-        SaveBuffer ??= new BufferWriter(true, types);
-
-        // Clean, don't bother serializing
-        if (SavePosition > -1)
-        {
-            SaveBuffer.Seek(SavePosition, SeekOrigin.Begin);
-            return;
-        }
-
-        LastSerialized = Core.Now;
-        SaveBuffer.Seek(0, SeekOrigin.Begin);
-        Serialize(SaveBuffer);
-
-        if (World.DirtyTrackingEnabled)
-        {
-            SavePosition = SaveBuffer.Position;
-        }
-        else
-        {
-            this.MarkDirty();
-        }
-    }
 }

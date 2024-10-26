@@ -1,105 +1,80 @@
+using ModernUO.Serialization;
 using Server.Items;
 using Server.Mobiles;
 
-namespace Server.Engines.Quests.Collector
+namespace Server.Engines.Quests.Collector;
+
+[SerializationGenerator(0, false)]
+public partial class GabrielPiete : BaseQuester
 {
-    public class GabrielPiete : BaseQuester
+    [Constructible]
+    public GabrielPiete() : base("the renowned minstrel")
     {
-        [Constructible]
-        public GabrielPiete() : base("the renowned minstrel")
+    }
+
+    public override string DefaultName => "Gabriel Piete";
+
+    public override void InitBody()
+    {
+        InitStats(100, 100, 25);
+
+        Hue = 0x83EF;
+
+        Female = false;
+        Body = 0x190;
+    }
+
+    public override void InitOutfit()
+    {
+        AddItem(new FancyShirt());
+        AddItem(new LongPants(0x5F7));
+        AddItem(new Shoes(0x5F7));
+
+        HairItemID = 0x2049; // Pig Tails
+        HairHue = 0x460;
+
+        FacialHairItemID = 0x2041; // Mustache
+        FacialHairHue = 0x460;
+    }
+
+    public override bool CanTalkTo(PlayerMobile to) =>
+        to.Quest is CollectorQuest qs && (qs.IsObjectiveInProgress(typeof(FindGabrielObjective))
+                                          || qs.IsObjectiveInProgress(typeof(FindSheetMusicObjective))
+                                          || qs.IsObjectiveInProgress(typeof(ReturnSheetMusicObjective))
+                                          || qs.IsObjectiveInProgress(typeof(ReturnAutographObjective)));
+
+    public override void OnTalk(PlayerMobile player, bool contextMenu)
+    {
+        var qs = player.Quest;
+
+        if (qs is not CollectorQuest)
         {
+            return;
         }
 
-        public GabrielPiete(Serial serial) : base(serial)
+        Direction = GetDirectionTo(player);
+
+        if (qs.FindObjective<FindGabrielObjective>() is { Completed: false } obj1)
         {
+            obj1.Complete();
+            return;
         }
 
-        public override string DefaultName => "Gabriel Piete";
-
-        public override void InitBody()
+        if (qs.IsObjectiveInProgress(typeof(FindSheetMusicObjective)))
         {
-            InitStats(100, 100, 25);
-
-            Hue = 0x83EF;
-
-            Female = false;
-            Body = 0x190;
+            qs.AddConversation(new GabrielNoSheetMusicConversation());
+            return;
         }
 
-        public override void InitOutfit()
+        if (qs.FindObjective<ReturnSheetMusicObjective>() is { Completed: false } obj2)
         {
-            AddItem(new FancyShirt());
-            AddItem(new LongPants(0x5F7));
-            AddItem(new Shoes(0x5F7));
-
-            HairItemID = 0x2049; // Pig Tails
-            HairHue = 0x460;
-
-            FacialHairItemID = 0x2041; // Mustache
-            FacialHairHue = 0x460;
+            obj2.Complete();
+            return;
         }
 
-        public override bool CanTalkTo(PlayerMobile to)
+        if (qs.IsObjectiveInProgress(typeof(ReturnAutographObjective)))
         {
-            QuestSystem qs = to.Quest as CollectorQuest;
-
-            if (qs == null)
-            {
-                return false;
-            }
-
-            return qs.IsObjectiveInProgress(typeof(FindGabrielObjective))
-                   || qs.IsObjectiveInProgress(typeof(FindSheetMusicObjective))
-                   || qs.IsObjectiveInProgress(typeof(ReturnSheetMusicObjective))
-                   || qs.IsObjectiveInProgress(typeof(ReturnAutographObjective));
-        }
-
-        public override void OnTalk(PlayerMobile player, bool contextMenu)
-        {
-            var qs = player.Quest;
-
-            if (qs is CollectorQuest)
-            {
-                Direction = GetDirectionTo(player);
-
-                QuestObjective obj = qs.FindObjective<FindGabrielObjective>();
-
-                if (obj?.Completed == false)
-                {
-                    obj.Complete();
-                }
-                else if (qs.IsObjectiveInProgress(typeof(FindSheetMusicObjective)))
-                {
-                    qs.AddConversation(new GabrielNoSheetMusicConversation());
-                }
-                else
-                {
-                    obj = qs.FindObjective<ReturnSheetMusicObjective>();
-
-                    if (obj?.Completed == false)
-                    {
-                        obj.Complete();
-                    }
-                    else if (qs.IsObjectiveInProgress(typeof(ReturnAutographObjective)))
-                    {
-                        qs.AddConversation(new GabrielIgnoreConversation());
-                    }
-                }
-            }
-        }
-
-        public override void Serialize(IGenericWriter writer)
-        {
-            base.Serialize(writer);
-
-            writer.Write(0); // version
-        }
-
-        public override void Deserialize(IGenericReader reader)
-        {
-            base.Deserialize(reader);
-
-            var version = reader.ReadInt();
+            qs.AddConversation(new GabrielIgnoreConversation());
         }
     }
 }

@@ -39,7 +39,7 @@ public static class HonorVirtue
 
     private static void EmbraceHonor(PlayerMobile pm)
     {
-        var virtues = pm.GetVirtues();
+        var virtues = VirtueSystem.GetVirtues(pm);
 
         if (virtues?.HonorActive == true)
         {
@@ -67,13 +67,13 @@ public static class HonorVirtue
             }
         }
 
-        pm.SendGump(new HonorSelf(pm));
+        pm.SendGump(new HonorSelfGump(pm));
     }
 
     public static void ActivateEmbrace(PlayerMobile pm)
     {
         var duration = GetHonorDuration(pm);
-        var virtues = pm.GetOrCreateVirtues();
+        var virtues = VirtueSystem.GetOrCreateVirtues(pm);
 
         int usedPoints = virtues.Honor switch
         {
@@ -89,10 +89,10 @@ public static class HonorVirtue
 
         Timer.DelayCall(
             TimeSpan.FromSeconds(duration),
-            (m) =>
+            m =>
             {
                 // We get the virtues again, in case it was deleted/dereferenced
-                var v = m.GetOrCreateVirtues();
+                var v = VirtueSystem.GetOrCreateVirtues(m);
                 v.HonorActive = false;
                 v.LastHonorUse = Core.Now;
                 m.SendLocalizedMessage(1063236); // You no longer embrace your honor
@@ -125,32 +125,23 @@ public static class HonorVirtue
             }
         }
 
+        if (Core.ML && target is PlayerMobile)
+        {
+            source.SendLocalizedMessage(1075614); // You cannot honor other players.
+            return;
+        }
+
         if (target.Hits < target.HitsMax)
         {
             source.SendLocalizedMessage(1063166); // You cannot honor this monster because it is too damaged.
             return;
         }
 
-        if (target.Body.IsHuman && (target is not BaseCreature cret || !cret.AlwaysAttackable && !cret.AlwaysMurderer))
+        // Allow honor on blue if not in a guarded region or blue in Felucca
+        if (target.Body.IsHuman && (target is not BaseCreature cret || !cret.AlwaysAttackable && !cret.AlwaysMurderer) &&
+            reg?.IsDisabled() == true && (map?.Rules & MapRules.HarmfulRestrictions) != 0)
         {
-            if (reg?.IsDisabled() != true)
-            {
-                // Allow honor on blue if not in a guarded region
-            }
-            else if ((map?.Rules & MapRules.HarmfulRestrictions) == 0)
-            {
-                // Allow honor on blue if in Fel
-            }
-            else
-            {
-                source.SendLocalizedMessage(1001018); // You cannot perform negative acts
-                return;                               // cannot honor in trammel town on blue
-            }
-        }
-
-        if (Core.ML && target is PlayerMobile)
-        {
-            source.SendLocalizedMessage(1075614); // You cannot honor other players.
+            source.SendLocalizedMessage(1001018); // You cannot perform negative acts
             return;
         }
 

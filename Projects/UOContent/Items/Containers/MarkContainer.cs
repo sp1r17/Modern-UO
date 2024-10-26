@@ -106,9 +106,9 @@ public partial class MarkContainer : LockableContainer
     [CommandProperty(AccessLevel.GameMaster)]
     public DateTime NextRelock => _relockTimer.Next;
 
-    public static void Initialize()
+    public static void Configure()
     {
-        CommandSystem.Register("SecretLocGen", AccessLevel.Administrator, SecretLocGen_OnCommand);
+        CommandSystem.Register("SecretLocGen", AccessLevel.Developer, SecretLocGen_OnCommand);
     }
 
     [Usage("SecretLocGen")]
@@ -130,18 +130,14 @@ public partial class MarkContainer : LockableContainer
 
     private static bool FindMarkContainer(Point3D p, Map map)
     {
-        var eable = map.GetItemsInRange<MarkContainer>(p, 0);
-
-        foreach (var item in eable)
+        foreach (var item in map.GetItemsAt<MarkContainer>(p))
         {
             if (item.Z == p.Z)
             {
-                eable.Free();
                 return true;
             }
         }
 
-        eable.Free();
         return false;
     }
 

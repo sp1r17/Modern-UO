@@ -1,6 +1,6 @@
 /*************************************************************************
  * ModernUO                                                              *
- * Copyright 2019-2023 - ModernUO Development Team                       *
+ * Copyright 2019-2024 - ModernUO Development Team                       *
  * Email: hi@modernuo.com                                                *
  * File: IGenericWriter.cs                                               *
  *                                                                       *
@@ -14,16 +14,16 @@
  *************************************************************************/
 
 using System;
+using System.Buffers;
+using System.Collections;
 using System.IO;
 using System.Net;
-using Server.Collections;
 
 namespace Server;
 
 public interface IGenericWriter
 {
     long Position { get; }
-    void Close();
     void Write(string value);
     void Write(long value);
     void Write(ulong value);
@@ -38,6 +38,7 @@ public interface IGenericWriter
     void Write(bool value);
     void Write(Serial serial);
     void Write(Type type);
+    void Write(decimal value);
 
     void Write(DateTime value)
     {
@@ -78,20 +79,12 @@ public interface IGenericWriter
         Write((byte)bytesWritten);
         Write(stack[..bytesWritten]);
     }
+
     void Write(TimeSpan value)
     {
         Write(value.Ticks);
     }
 
-    public void Write(decimal value)
-    {
-        var bits = decimal.GetBits(value);
-
-        for (var i = 0; i < 4; ++i)
-        {
-            Write(bits[i]);
-        }
-    }
     void WriteEncodedInt(int value)
     {
         var v = (uint)value;
@@ -104,6 +97,7 @@ public interface IGenericWriter
 
         Write((byte)v);
     }
+
     void Write(Point3D value)
     {
         Write(value.m_X);
@@ -127,12 +121,17 @@ public interface IGenericWriter
     }
     void Write(Map value) => Write((byte)(value?.MapIndex ?? 0xFF));
     void Write(Race value) => Write((byte)(value?.RaceIndex ?? 0xFF));
+    void Write(byte[] bytes);
+    void Write(byte[] bytes, int offset, int count);
     void Write(ReadOnlySpan<byte> bytes);
     unsafe void WriteEnum<T>(T value) where T : unmanaged, Enum
     {
         switch (sizeof(T))
         {
-            default: throw new ArgumentException($"Argument of type {typeof(T)} is not a normal enum");
+            default:
+                {
+                    throw new ArgumentException($"Argument of type {typeof(T)} is not a normal enum");
+                }
             case 1:
                 {
                     Write(*(byte*)&value);
@@ -162,7 +161,17 @@ public interface IGenericWriter
         Write(stack);
     }
 
-    void Write(BitArray bitArray);
+    public void Write(BitArray bitArray)
+    {
+        var bytesLength = (bitArray.Length - 1 + (1 << 3)) >>> 3;
+        var arrayBuffer = ArrayPool<byte>.Shared.Rent(bytesLength);
+
+        WriteEncodedInt(bytesLength);
+        bitArray.CopyTo(arrayBuffer, 0);
+
+        Write(arrayBuffer.AsSpan(0, bytesLength));
+        ArrayPool<byte>.Shared.Return(arrayBuffer);
+    }
 
     void Write(TextDefinition def)
     {

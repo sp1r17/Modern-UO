@@ -82,15 +82,14 @@ namespace Server.Engines.Quests.Doom
         {
             base.Cancel();
 
-            QuestObjective obj = FindObjective<CollectBonesObjective>();
+            var obj = FindObjective<CollectBonesObjective>();
 
             if (obj?.CurProgress > 0)
             {
                 From.BankBox.DropItem(new DaemonBone(obj.CurProgress));
 
-                From.SendLocalizedMessage(
-                    1050030
-                ); // The Daemon bones that you have thus far given to Victoria have been returned to you.
+                // The Daemon bones that you have thus far given to Victoria have been returned to you.
+                From.SendLocalizedMessage(1050030);
             }
         }
 

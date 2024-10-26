@@ -6,12 +6,14 @@ namespace Server.Engines.Doom
 {
     public static class GenGauntlet
     {
-        public static void Initialize()
+        public static void Configure()
         {
-            CommandSystem.Register("GenGauntlet", AccessLevel.Administrator, GenGauntlet_OnCommand);
-            CommandSystem.Register("RemGauntlet", AccessLevel.Administrator, RemoveGauntlet);
+            CommandSystem.Register("GenGauntlet", AccessLevel.Developer, GenGauntlet_OnCommand);
+            CommandSystem.Register("RemGauntlet", AccessLevel.Developer, RemoveGauntlet);
         }
 
+        [Usage("RemGauntlet")]
+        [Description("Removes the Gauntlet from Dungeon Doom.")]
         public static void RemoveGauntlet(CommandEventArgs e)
         {
             RemoveMobile<PricedHealer>(387, 400);
@@ -45,6 +47,8 @@ namespace Server.Engines.Doom
             RemoveItem<ConfirmationMoongate>(433, 326, 4);
         }
 
+        [Usage("GenGauntlet")]
+        [Description("Generates the Gauntlet in Dungeon Doom.")]
         public static void GenGauntlet_OnCommand(CommandEventArgs e)
         {
             RemoveGauntlet(e);
@@ -180,7 +184,7 @@ namespace Server.Engines.Doom
         public static void RemoveDoorSet(int x, int y)
         {
             var loc = new Point3D(x, y, -1);
-            foreach (var item in Map.Malas.GetItemsInRange(loc, 0))
+            foreach (var item in Map.Malas.GetItemsAt(loc))
             {
                 if (item is BaseDoor door)
                 {
@@ -226,9 +230,9 @@ namespace Server.Engines.Doom
 
         public static void RemoveItem<T>(int x, int y, int z = -1) where T : Item
         {
-            foreach (var item in Map.Malas.GetItemsInRange(new Point3D(x, y, z), 0))
+            foreach (var item in Map.Malas.GetItemsAt(x, y))
             {
-                if (item is T)
+                if (item is T && z == -1 || item.Z == z)
                 {
                     item.Delete();
                     break;

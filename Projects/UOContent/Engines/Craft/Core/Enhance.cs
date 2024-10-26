@@ -1,4 +1,5 @@
 using System;
+using Server.Gumps;
 using Server.Items;
 using Server.Targeting;
 
@@ -182,7 +183,7 @@ namespace Server.Engines.Craft
                 dincBonus = false;
             }
 
-            var skill = from.Skills[craftSystem.MainSkill].Fixed / 10;
+            var skill = (int)from.Skills[craftSystem.MainSkill].Value;
 
             if (skill >= 100)
             {

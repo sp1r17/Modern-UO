@@ -5,7 +5,7 @@ using Server.Targeting;
 
 namespace Server.Spells.First
 {
-    public class HealSpell : MagerySpell, ISpellTargetingMobile
+    public class HealSpell : MagerySpell, ITargetingSpell<Mobile>
     {
         private static readonly SpellInfo _info = new(
             "Heal",
@@ -45,16 +45,16 @@ namespace Server.Spells.First
             {
                 SpellHelper.Turn(Caster, m);
 
-                int toHeal;
+                double toHeal;
 
                 if (Core.AOS)
                 {
-                    toHeal = Caster.Skills.Magery.Fixed / 120;
+                    toHeal = Caster.Skills.Magery.Value / 12;
                     toHeal += Utility.RandomMinMax(1, 4);
 
                     if (Core.SE && Caster != m)
                     {
-                        toHeal = (int)(toHeal * 1.5);
+                        toHeal *= 1.5;
                     }
                 }
                 else
@@ -64,13 +64,11 @@ namespace Server.Spells.First
                 }
 
                 // m.Heal( toHeal, Caster );
-                SpellHelper.Heal(toHeal, m, Caster);
+                SpellHelper.Heal((int)toHeal, m, Caster);
 
                 m.FixedParticles(0x376A, 9, 32, 5005, EffectLayer.Waist);
                 m.PlaySound(0x1F2);
             }
-
-            FinishSequence();
         }
 
         public override bool CheckCast()
@@ -86,7 +84,7 @@ namespace Server.Spells.First
 
         public override void OnCast()
         {
-            Caster.Target = new SpellTargetMobile(this, TargetFlags.Beneficial, Core.ML ? 10 : 12);
+            Caster.Target = new SpellTarget<Mobile>(this, TargetFlags.Beneficial);
         }
     }
 }

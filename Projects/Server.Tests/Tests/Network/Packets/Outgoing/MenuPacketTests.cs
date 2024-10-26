@@ -1,5 +1,4 @@
-using System;
-using System.Collections.Generic;
+using Server.Collections;
 using Server.ContextMenus;
 using Server.Menus.ItemLists;
 using Server.Menus.Questions;
@@ -10,13 +9,13 @@ namespace Server.Tests.Network
 {
     internal class ContextMenuItem : Item
     {
-        private bool _requiresNewPacket;
+        private readonly bool _requiresNewPacket;
         public ContextMenuItem(Serial serial, bool requiresNewPacket) : base(serial) =>
             _requiresNewPacket = requiresNewPacket;
 
-        public override void GetContextMenuEntries(Mobile from, List<ContextMenuEntry> list)
+        public override void GetContextMenuEntries(Mobile from, ref PooledRefList<ContextMenuEntry> list)
         {
-            base.GetContextMenuEntries(from, list);
+            base.GetContextMenuEntries(from, ref list);
 
             list.Add(new ContextMenuEntry(3000001));
             list.Add(new ContextMenuEntry(3000002));
@@ -36,12 +35,11 @@ namespace Server.Tests.Network
         {
             var menu = new ItemListMenu(
                 "Which item would you choose?",
-                new[]
-                {
+                [
                     new ItemListEntry("Item 1", 0x01),
                     new ItemListEntry("Item 2", 0x100),
                     new ItemListEntry("Item 3", 0x1000, 250)
-                }
+                ]
             );
 
             var expected = new DisplayItemListMenu(menu).Compile();
@@ -49,8 +47,8 @@ namespace Server.Tests.Network
             var ns = PacketTestUtilities.CreateTestNetState();
             ns.SendDisplayItemListMenu(menu);
 
-            var result = ns.SendPipe.Reader.TryRead();
-            AssertThat.Equal(result.Buffer[0].AsSpan(0), expected);
+            var result = ns.SendPipe.Reader.AvailableToRead();
+            AssertThat.Equal(result, expected);
         }
 
         [Fact]
@@ -58,20 +56,19 @@ namespace Server.Tests.Network
         {
             var menu = new QuestionMenu(
                 "Which option would you choose?",
-                new[]
-                {
+                [
                     "Option 1",
                     "Option 2",
                     "Option 3"
-                }
+                ]
             );
 
             var expected = new DisplayQuestionMenu(menu).Compile();
             var ns = PacketTestUtilities.CreateTestNetState();
             ns.SendDisplayQuestionMenu(menu);
 
-            var result = ns.SendPipe.Reader.TryRead();
-            AssertThat.Equal(result.Buffer[0].AsSpan(0), expected);
+            var result = ns.SendPipe.Reader.AvailableToRead();
+            AssertThat.Equal(result, expected);
         }
 
         [Theory]
@@ -85,7 +82,7 @@ namespace Server.Tests.Network
             m.DefaultMobileInit();
 
             var item = new ContextMenuItem(World.NewItem, newPacket);
-            var menu = new ContextMenu(m, item);
+            var menu = ContextMenuSystem.CreateContextMenu(m, item);
 
             var packet = newHaven && newPacket ? (Packet)new DisplayContextMenu(menu) : new DisplayContextMenuOld(menu);
             var expected = packet.Compile();
@@ -98,8 +95,8 @@ namespace Server.Tests.Network
 
             ns.SendDisplayContextMenu(menu);
 
-            var result = ns.SendPipe.Reader.TryRead();
-            AssertThat.Equal(result.Buffer[0].AsSpan(0), expected);
+            var result = ns.SendPipe.Reader.AvailableToRead();
+            AssertThat.Equal(result, expected);
         }
     }
 }

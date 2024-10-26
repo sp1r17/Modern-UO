@@ -1,6 +1,6 @@
 /*************************************************************************
  * ModernUO                                                              *
- * Copyright 2019-2023 - ModernUO Development Team                       *
+ * Copyright 2019-2024 - ModernUO Development Team                       *
  * Email: hi@modernuo.com                                                *
  * File: Localization.cs                                                 *
  *                                                                       *
@@ -14,6 +14,7 @@
  *************************************************************************/
 
 using System;
+using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.IO;
 using System.Runtime.CompilerServices;
@@ -28,7 +29,7 @@ public static class Localization
     public const string FallbackLanguage = "enu";
 
     private static Dictionary<int, LocalizationEntry> _fallbackEntries;
-    private static Dictionary<string, Dictionary<int, LocalizationEntry>> _localizations = new();
+    private static readonly Dictionary<string, Dictionary<int, LocalizationEntry>> _localizations = new();
 
     public static void Configure()
     {
@@ -44,6 +45,7 @@ public static class Localization
 
     public static void Add(string lang, int number, string text)
     {
+        lang = lang?.ToLower() ?? FallbackLanguage;
         var entry = new LocalizationEntry(lang, number, text);
         if (!_localizations.TryGetValue(lang, out var entries))
         {
@@ -60,6 +62,7 @@ public static class Localization
 
     public static bool Remove(string lang, int number)
     {
+        lang = lang?.ToLower() ?? FallbackLanguage;
         if (!_localizations.TryGetValue(lang, out var entries) || !entries.Remove(number))
         {
             return false;
@@ -73,11 +76,18 @@ public static class Localization
         return true;
     }
 
+    public static void Clear()
+    {
+        _localizations.Clear();
+        _fallbackEntries = null;
+    }
+
     public static Dictionary<int, LocalizationEntry> LoadClilocs(string lang) =>
         LoadClilocs(lang, Core.FindDataFile($"cliloc.{lang}", false));
 
     private static Dictionary<int, LocalizationEntry> LoadClilocs(string lang, string file)
     {
+        lang = lang?.ToLower() ?? FallbackLanguage;
         Dictionary<int, LocalizationEntry> entries = _localizations[lang] = new Dictionary<int, LocalizationEntry>();
         if (lang == FallbackLanguage)
         {
@@ -87,28 +97,46 @@ public static class Localization
         if (File.Exists(file))
         {
             using var fs = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.Read);
-            using var bin = new BinaryReader(fs);
+            Span<byte> header = stackalloc byte[6];
+            fs.Read(header);
 
-            bin.ReadInt32();
-            bin.ReadInt16();
+            byte[] data;
+            BufferReader br;
+            if (BinaryPrimitives.ReadInt32LittleEndian(header) != 2 || BinaryPrimitives.ReadInt16LittleEndian(header[4..]) != 1)
+            {
+                // Skip header
+                fs.Position = 4;
+                data = BwtDecompress.Decompress(fs, (int)fs.Length - 4);
+                br = new BufferReader(data);
+
+                var header2 = br.ReadInt();   // Header 2
+                var header1 = br.ReadShort(); // Header 1
+
+                if (header2 != 2 || header1 != 1)
+                {
+                    throw new Exception($"Invalid cliloc header in {file}");
+                }
+            }
+            else
+            {
+                data = GC.AllocateUninitializedArray<byte>((int)fs.Length - 6);
+                fs.Read(data);
+                br = new BufferReader(data);
+            }
 
             byte[] buffer = null;
-            while (bin.BaseStream.Length != bin.BaseStream.Position)
+            while (br.Position < data.Length)
             {
-                var number = bin.ReadInt32();
-                var flag = bin.ReadByte(); // Original, Custom, Modified
-                var length = bin.ReadInt16();
+                var number = br.ReadInt();
+                var flag = br.ReadByte(); // Original, Custom, Modified
+                var length = br.ReadShort();
 
                 if (buffer == null || buffer.Length < length)
                 {
                     buffer = GC.AllocateUninitializedArray<byte>(length);
                 }
 
-                var bytesRead = bin.Read(buffer, 0, length);
-                if (bytesRead != length)
-                {
-                    throw new Exception($"Could not read enough bytes from {file}");
-                }
+                br.Read(buffer.AsSpan(0, length));
 
                 var text = Encoding.UTF8.GetString(buffer.AsSpan(0, length));
                 entries[number] = new LocalizationEntry(lang, number, text);
@@ -123,7 +151,7 @@ public static class Localization
     /// </summary>
     /// <param name="number">Localization number</param>
     /// <param name="lang">Language in ISO 639‑2 format</param>
-    /// <returns>Original text for the localizaton entry</returns>
+    /// <returns>Original text for the localization entry</returns>
     public static string GetText(int number, string lang = FallbackLanguage) =>
         TryGetLocalization(lang, number, out var entry) ? entry.Text : null;
 
@@ -145,6 +173,7 @@ public static class Localization
     /// <returns>True if the entry exists, otherwise false.</returns>
     public static bool TryGetLocalization(string lang, int number, out LocalizationEntry entry)
     {
+        lang = lang?.ToLower() ?? FallbackLanguage;
         if (lang != FallbackLanguage)
         {
             if (!_localizations.TryGetValue(lang, out var entries))

@@ -1,3 +1,4 @@
+using Server.Collections;
 using Server.Factions;
 using Server.Items;
 using Server.Misc;
@@ -8,7 +9,7 @@ using Server.Spells.Sixth;
 
 namespace Server.Spells.Third
 {
-    public class TeleportSpell : MagerySpell, ISpellTargetingPoint3D
+    public class TeleportSpell : MagerySpell, ITargetingSpell<IPoint3D>
     {
         private static readonly SpellInfo _info = new(
             "Teleport",
@@ -96,21 +97,21 @@ namespace Server.Spells.Third
 
                 m.PlaySound(0x1FE);
 
-                var eable = m.GetItemsInRange(0);
-
-                foreach (var item in eable)
+                using var queue = PooledRefQueue<Item>.Create();
+                foreach (var item in m.GetItemsAt())
                 {
-                    if (item is ParalyzeFieldSpell.InternalItem or
-                        PoisonFieldSpell.InternalItem or FireFieldSpell.FireFieldItem)
+                    if (item is ParalyzeField or PoisonField or FireFieldItem)
                     {
-                        item.OnMoveOver(m);
+                        // Use a queue just in case OnMoveOver changes the item's sector
+                        queue.Enqueue(item);
                     }
                 }
 
-                eable.Free();
+                while (queue.Count > 0)
+                {
+                    queue.Dequeue().OnMoveOver(m);
+                }
             }
-
-            FinishSequence();
         }
 
         public override bool CheckCast()
@@ -138,7 +139,7 @@ namespace Server.Spells.Third
 
         public override void OnCast()
         {
-            Caster.Target = new SpellTargetPoint3D(this, range: Core.ML ? 10 : 12);
+            Caster.Target = new SpellTarget<IPoint3D>(this, allowGround: true);
         }
     }
 }

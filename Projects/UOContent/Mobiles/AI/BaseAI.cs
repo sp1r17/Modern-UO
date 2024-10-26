@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
+using Server.Collections;
 using Server.ContextMenus;
-using Server.Engines.Quests;
 using Server.Engines.Quests.Necro;
 using Server.Engines.Spawners;
 using Server.Engines.Virtues;
@@ -42,6 +42,8 @@ public enum ActionType
 
 public abstract class BaseAI
 {
+    // How many milliseconds until our next move can we consider it ok to move without deferring/blocking.
+    private const int FuzzyTimeUntilNextMove = 24;
     private static readonly SkillName[] m_KeywordTable =
     {
         SkillName.Parry,
@@ -94,10 +96,9 @@ public abstract class BaseAI
         SkillName.Meditation
     };
 
-    private static readonly Queue<Item> m_Obstacles = new();
     protected ActionType m_Action;
 
-    public BaseCreature m_Mobile;
+    public readonly BaseCreature m_Mobile;
 
     private long m_NextDetectHidden;
     private long m_NextStopGuard;
@@ -159,40 +160,44 @@ public abstract class BaseAI
         return name != null && speech.InsensitiveStartsWith(name);
     }
 
-    public virtual void GetContextMenuEntries(Mobile from, List<ContextMenuEntry> list)
+    public virtual void GetContextMenuEntries(Mobile from, ref PooledRefList<ContextMenuEntry> list)
     {
-        if (from.Alive && m_Mobile.Controlled && from.InRange(m_Mobile, 14))
+        if (!from.Alive || !m_Mobile.Controlled || !from.InRange(m_Mobile, 14))
         {
-            if (from == m_Mobile.ControlMaster)
+            return;
+        }
+
+        var isDeadPet = m_Mobile.IsDeadPet;
+
+        if (from == m_Mobile.ControlMaster)
+        {
+            list.Add(new InternalEntry(6107, 14, OrderType.Guard, !isDeadPet));  // Command: Guard
+            list.Add(new InternalEntry(6108, 14, OrderType.Follow, true)); // Command: Follow
+
+            if (m_Mobile.CanDrop)
             {
-                list.Add(new InternalEntry(from, 6107, 14, m_Mobile, this, OrderType.Guard));  // Command: Guard
-                list.Add(new InternalEntry(from, 6108, 14, m_Mobile, this, OrderType.Follow)); // Command: Follow
-
-                if (m_Mobile.CanDrop)
-                {
-                    list.Add(new InternalEntry(from, 6109, 14, m_Mobile, this, OrderType.Drop)); // Command: Drop
-                }
-
-                list.Add(new InternalEntry(from, 6111, 14, m_Mobile, this, OrderType.Attack)); // Command: Kill
-
-                list.Add(new InternalEntry(from, 6112, 14, m_Mobile, this, OrderType.Stop)); // Command: Stop
-                list.Add(new InternalEntry(from, 6114, 14, m_Mobile, this, OrderType.Stay)); // Command: Stay
-
-                if (!m_Mobile.Summoned && m_Mobile is not GrizzledMare)
-                {
-                    list.Add(new InternalEntry(from, 6110, 14, m_Mobile, this, OrderType.Friend));   // Add Friend
-                    list.Add(new InternalEntry(from, 6099, 14, m_Mobile, this, OrderType.Unfriend)); // Remove Friend
-                    list.Add(new InternalEntry(from, 6113, 14, m_Mobile, this, OrderType.Transfer)); // Transfer
-                }
-
-                list.Add(new InternalEntry(from, 6118, 14, m_Mobile, this, OrderType.Release)); // Release
+                list.Add(new InternalEntry(6109, 14, OrderType.Drop, !isDeadPet)); // Command: Drop
             }
-            else if (m_Mobile.IsPetFriend(from))
+
+            list.Add(new InternalEntry(6111, 14, OrderType.Attack, !isDeadPet)); // Command: Kill
+
+            list.Add(new InternalEntry(6112, 14, OrderType.Stop, true)); // Command: Stop
+            list.Add(new InternalEntry(6114, 14, OrderType.Stay, true)); // Command: Stay
+
+            if (!m_Mobile.Summoned && m_Mobile is not GrizzledMare)
             {
-                list.Add(new InternalEntry(from, 6108, 14, m_Mobile, this, OrderType.Follow)); // Command: Follow
-                list.Add(new InternalEntry(from, 6112, 14, m_Mobile, this, OrderType.Stop));   // Command: Stop
-                list.Add(new InternalEntry(from, 6114, 14, m_Mobile, this, OrderType.Stay));   // Command: Stay
+                list.Add(new InternalEntry(6110, 14, OrderType.Friend, true));         // Add Friend
+                list.Add(new InternalEntry(6099, 14, OrderType.Unfriend, true));       // Remove Friend
+                list.Add(new InternalEntry(6113, 14, OrderType.Transfer, !isDeadPet)); // Transfer
             }
+
+            list.Add(new InternalEntry(6118, 14, OrderType.Release, true)); // Release
+        }
+        else if (m_Mobile.IsPetFriend(from))
+        {
+            list.Add(new InternalEntry(6108, 14, OrderType.Follow, true));     // Command: Follow
+            list.Add(new InternalEntry(6112, 14, OrderType.Stop, !isDeadPet)); // Command: Stop
+            list.Add(new InternalEntry(6114, 14, OrderType.Stay, true));       // Command: Stay
         }
     }
 
@@ -870,7 +875,7 @@ public abstract class BaseAI
                     m_Mobile.Warmode = false;
                     m_Mobile.Combatant = null;
                     m_Mobile.FocusMob = null;
-                    m_Mobile.CurrentSpeed = m_Mobile.PassiveSpeed;
+                    m_Mobile.SetCurrentSpeedToPassive();
                     break;
                 }
 
@@ -878,7 +883,7 @@ public abstract class BaseAI
                 {
                     m_Mobile.Warmode = true;
                     m_Mobile.FocusMob = null;
-                    m_Mobile.CurrentSpeed = m_Mobile.ActiveSpeed;
+                    m_Mobile.SetCurrentSpeedToActive();
                     break;
                 }
 
@@ -887,9 +892,8 @@ public abstract class BaseAI
                     m_Mobile.Warmode = true;
                     m_Mobile.FocusMob = null;
                     m_Mobile.Combatant = null;
-                    m_Mobile.CurrentSpeed = m_Mobile.ActiveSpeed;
                     m_NextStopGuard = Core.TickCount + (int)TimeSpan.FromSeconds(10).TotalMilliseconds;
-                    m_Mobile.CurrentSpeed = m_Mobile.ActiveSpeed;
+                    m_Mobile.SetCurrentSpeedToActive();
                     break;
                 }
 
@@ -897,21 +901,21 @@ public abstract class BaseAI
                 {
                     m_Mobile.Warmode = true;
                     m_Mobile.FocusMob = null;
-                    m_Mobile.CurrentSpeed = m_Mobile.ActiveSpeed;
+                    m_Mobile.SetCurrentSpeedToActive();
                     break;
                 }
 
             case ActionType.Interact:
                 {
                     m_Mobile.Warmode = false;
-                    m_Mobile.CurrentSpeed = m_Mobile.PassiveSpeed;
+                    m_Mobile.SetCurrentSpeedToPassive();
                     break;
                 }
 
             case ActionType.Backoff:
                 {
                     m_Mobile.Warmode = false;
-                    m_Mobile.CurrentSpeed = m_Mobile.PassiveSpeed;
+                    m_Mobile.SetCurrentSpeedToPassive();
                     break;
                 }
         }
@@ -969,12 +973,9 @@ public abstract class BaseAI
                 WalkRandomInHome(2, 2, 1);
             }
         }
-        else if (CheckMove())
+        else if (CheckMove() && CanMoveNow(out _) && !m_Mobile.CheckIdle())
         {
-            if (!m_Mobile.CheckIdle())
-            {
-                WalkRandomInHome(2, 2, 1);
-            }
+            WalkRandomInHome(2, 2, 1);
         }
 
         if (m_Mobile.Combatant?.Deleted == false && m_Mobile.Combatant.Alive &&
@@ -998,20 +999,26 @@ public abstract class BaseAI
             return true;
         }
 
-        var c = m_Mobile.Combatant;
+        var combatant = m_Mobile.Combatant;
 
-        if (c?.Deleted != false || c.Map != m_Mobile.Map || !c.Alive || c.IsDeadBondedPet)
+        if (combatant == null || combatant.Deleted || combatant.Map != m_Mobile.Map || !combatant.Alive ||
+            combatant.IsDeadBondedPet)
         {
+            if (m_Mobile.Debug)
+            {
+                m_Mobile.DebugSay("My combatant is gone!");
+            }
+
             Action = ActionType.Wander;
             return true;
         }
 
-        m_Mobile.Direction = m_Mobile.GetDirectionTo(c);
-        if (m_Mobile.TriggerAbility(MonsterAbilityTrigger.CombatAction, c))
+        m_Mobile.Direction = m_Mobile.GetDirectionTo(combatant);
+        if (m_Mobile.TriggerAbility(MonsterAbilityTrigger.CombatAction, combatant))
         {
             if (m_Mobile.Debug)
             {
-                m_Mobile.DebugSay($"I used my abilities on {c.Name}!");
+                m_Mobile.DebugSay($"I used my abilities on {combatant.Name}!");
             }
         }
 
@@ -1118,7 +1125,7 @@ public abstract class BaseAI
                 {
                     m_Mobile.ControlMaster.RevealingAction();
                     m_Mobile.Home = m_Mobile.Location;
-                    m_Mobile.CurrentSpeed = m_Mobile.PassiveSpeed;
+                    m_Mobile.SetCurrentSpeedToPassive();
                     m_Mobile.PlaySound(m_Mobile.GetIdleSound());
                     m_Mobile.Warmode = false;
                     m_Mobile.Combatant = null;
@@ -1128,7 +1135,7 @@ public abstract class BaseAI
             case OrderType.Come:
                 {
                     m_Mobile.ControlMaster.RevealingAction();
-                    m_Mobile.CurrentSpeed = m_Mobile.ActiveSpeed;
+                    m_Mobile.SetCurrentSpeedToActive();
                     m_Mobile.PlaySound(m_Mobile.GetIdleSound());
                     m_Mobile.Warmode = false;
                     m_Mobile.Combatant = null;
@@ -1138,7 +1145,7 @@ public abstract class BaseAI
             case OrderType.Drop:
                 {
                     m_Mobile.ControlMaster.RevealingAction();
-                    m_Mobile.CurrentSpeed = m_Mobile.PassiveSpeed;
+                    m_Mobile.SetCurrentSpeedToPassive();
                     m_Mobile.PlaySound(m_Mobile.GetIdleSound());
                     m_Mobile.Warmode = false;
                     m_Mobile.Combatant = null;
@@ -1155,7 +1162,7 @@ public abstract class BaseAI
             case OrderType.Guard:
                 {
                     m_Mobile.ControlMaster.RevealingAction();
-                    m_Mobile.CurrentSpeed = m_Mobile.ActiveSpeed;
+                    m_Mobile.SetCurrentSpeedToActive();
                     m_Mobile.PlaySound(m_Mobile.GetIdleSound());
                     m_Mobile.Warmode = true;
                     m_Mobile.Combatant = null;
@@ -1166,7 +1173,7 @@ public abstract class BaseAI
             case OrderType.Attack:
                 {
                     m_Mobile.ControlMaster.RevealingAction();
-                    m_Mobile.CurrentSpeed = m_Mobile.ActiveSpeed;
+                    m_Mobile.SetCurrentSpeedToActive();
                     m_Mobile.PlaySound(m_Mobile.GetIdleSound());
 
                     m_Mobile.Warmode = true;
@@ -1177,7 +1184,7 @@ public abstract class BaseAI
             case OrderType.Patrol:
                 {
                     m_Mobile.ControlMaster.RevealingAction();
-                    m_Mobile.CurrentSpeed = m_Mobile.ActiveSpeed;
+                    m_Mobile.SetCurrentSpeedToActive();
                     m_Mobile.PlaySound(m_Mobile.GetIdleSound());
                     m_Mobile.Warmode = false;
                     m_Mobile.Combatant = null;
@@ -1187,7 +1194,7 @@ public abstract class BaseAI
             case OrderType.Release:
                 {
                     m_Mobile.ControlMaster.RevealingAction();
-                    m_Mobile.CurrentSpeed = m_Mobile.PassiveSpeed;
+                    m_Mobile.SetCurrentSpeedToPassive();
                     m_Mobile.PlaySound(m_Mobile.GetIdleSound());
                     m_Mobile.Warmode = false;
                     m_Mobile.Combatant = null;
@@ -1197,7 +1204,7 @@ public abstract class BaseAI
             case OrderType.Stay:
                 {
                     m_Mobile.ControlMaster.RevealingAction();
-                    m_Mobile.CurrentSpeed = m_Mobile.PassiveSpeed;
+                    m_Mobile.SetCurrentSpeedToPassive();
                     m_Mobile.PlaySound(m_Mobile.GetIdleSound());
                     m_Mobile.Warmode = false;
                     m_Mobile.Combatant = null;
@@ -1208,7 +1215,7 @@ public abstract class BaseAI
                 {
                     m_Mobile.ControlMaster.RevealingAction();
                     m_Mobile.Home = m_Mobile.Location;
-                    m_Mobile.CurrentSpeed = m_Mobile.PassiveSpeed;
+                    m_Mobile.SetCurrentSpeedToPassive();
                     m_Mobile.PlaySound(m_Mobile.GetIdleSound());
                     m_Mobile.Warmode = false;
                     m_Mobile.Combatant = null;
@@ -1218,7 +1225,7 @@ public abstract class BaseAI
             case OrderType.Follow:
                 {
                     m_Mobile.ControlMaster.RevealingAction();
-                    m_Mobile.CurrentSpeed = m_Mobile.ActiveSpeed;
+                    m_Mobile.SetCurrentSpeedToActive();
                     m_Mobile.PlaySound(m_Mobile.GetIdleSound());
 
                     m_Mobile.Warmode = false;
@@ -1229,7 +1236,7 @@ public abstract class BaseAI
             case OrderType.Transfer:
                 {
                     m_Mobile.ControlMaster.RevealingAction();
-                    m_Mobile.CurrentSpeed = m_Mobile.PassiveSpeed;
+                    m_Mobile.SetCurrentSpeedToPassive();
                     m_Mobile.PlaySound(m_Mobile.GetIdleSound());
 
                     m_Mobile.Warmode = false;
@@ -1367,7 +1374,7 @@ public abstract class BaseAI
 
                 if (qs is DarkTidesQuest)
                 {
-                    QuestObjective obj = qs.FindObjective<FetchAbraxusScrollObjective>();
+                    var obj = qs.FindObjective<FetchAbraxusScrollObjective>();
 
                     if (obj?.Completed == false)
                     {
@@ -1949,31 +1956,28 @@ public abstract class BaseAI
             m_Mobile.Combatant = null;
             m_Mobile.Warmode = false;
         }
+        else if (m_Mobile.BardTarget?.Deleted != false || m_Mobile.BardTarget.Map != m_Mobile.Map ||
+                 m_Mobile.GetDistanceToSqrt(m_Mobile.BardTarget) > m_Mobile.RangePerception)
+        {
+            if (m_Mobile.Debug)
+            {
+                m_Mobile.DebugSay("I have lost my provoke target");
+            }
+
+            m_Mobile.BardProvoked = false;
+            m_Mobile.BardMaster = null;
+            m_Mobile.BardTarget = null;
+
+            m_Mobile.Combatant = null;
+            m_Mobile.Warmode = false;
+        }
         else
         {
-            if (m_Mobile.BardTarget?.Deleted != false || m_Mobile.BardTarget.Map != m_Mobile.Map ||
-                m_Mobile.GetDistanceToSqrt(m_Mobile.BardTarget) > m_Mobile.RangePerception)
-            {
-                if (m_Mobile.Debug)
-                {
-                    m_Mobile.DebugSay("I have lost my provoke target");
-                }
+            m_Mobile.Combatant = m_Mobile.BardTarget;
+            m_Action = ActionType.Combat;
 
-                m_Mobile.BardProvoked = false;
-                m_Mobile.BardMaster = null;
-                m_Mobile.BardTarget = null;
-
-                m_Mobile.Combatant = null;
-                m_Mobile.Warmode = false;
-            }
-            else
-            {
-                m_Mobile.Combatant = m_Mobile.BardTarget;
-                m_Action = ActionType.Combat;
-
-                m_Mobile.OnThink();
-                Think();
-            }
+            m_Mobile.OnThink();
+            Think();
         }
 
         return true;
@@ -1986,115 +1990,123 @@ public abstract class BaseAI
             return;
         }
 
+        if (iChanceToNotMove <= 0)
+        {
+            return;
+        }
+
         for (var i = 0; i < iSteps; i++)
         {
-            if (Utility.Random(8 * iChanceToNotMove) <= 8)
+            if (Utility.Random(1 + iChanceToNotMove) == 0)
             {
-                var iRndMove = Utility.Random(0, 8 + 9 * iChanceToDir);
-
-                switch (iRndMove)
-                {
-                    case 0:
-                        {
-                            DoMove(Direction.Up);
-                            break;
-                        }
-                    case 1:
-                        {
-                            DoMove(Direction.North);
-                            break;
-                        }
-                    case 2:
-                        {
-                            DoMove(Direction.Left);
-                            break;
-                        }
-                    case 3:
-                        {
-                            DoMove(Direction.West);
-                            break;
-                        }
-                    case 5:
-                        {
-                            DoMove(Direction.Down);
-                            break;
-                        }
-                    case 6:
-                        {
-                            DoMove(Direction.South);
-                            break;
-                        }
-                    case 7:
-                        {
-                            DoMove(Direction.Right);
-                            break;
-                        }
-                    case 8:
-                        {
-                            DoMove(Direction.East);
-                            break;
-                        }
-                    default:
-                        {
-                            DoMove(m_Mobile.Direction);
-                            break;
-                        }
-                }
+                // iChanceToDir = 2, total weight is 18
+                // 7/26 chance of other direction
+                var iRndMove = Utility.Random(8 * (iChanceToDir + 1));
+                Direction direction = iRndMove < 8 ? (Direction)iRndMove : m_Mobile.Direction;
+                DoMove(direction);
             }
         }
     }
 
-    public double TransformMoveDelay(double thinkingSpeed)
+    public static double TransformMoveDelay(BaseCreature bc, bool isPassive = false)
     {
-        var isControlled = m_Mobile.Controlled || m_Mobile.Summoned;
-
-        // Monster is passive
-        if (!isControlled && Math.Abs(thinkingSpeed - m_Mobile.PassiveSpeed) < 0.0001)
+        if (bc == null)
         {
-            thinkingSpeed *= 3; // Monster passive is 3x slower than thinking
-        }
-        else if (!isControlled || m_Mobile.ControlOrder != OrderType.Follow || m_Mobile.ControlTarget != m_Mobile.ControlMaster)
-        {
-            thinkingSpeed *= 2; // Monster active speed is 2x slower than thinking
+            return 0.1;
         }
 
-        if (!m_Mobile.IsDeadPet && (m_Mobile.ReduceSpeedWithDamage || m_Mobile.IsSubdued))
+        if (bc.MoveSpeedMod > 0)
+        {
+            return bc.MoveSpeedMod;
+        }
+
+        var moveSpeed = bc.CurrentSpeed;
+        var isControlled = bc.Controlled || bc.Summoned;
+
+        /*
+         * Movement Speed Table based on RunUO
+         * <0.075 -> 0.0375
+         * 0.075 -> 0.05
+         * 0.1 -> 0.125
+         * 0.2 -> 0.3
+         * 0.25 -> 0.45
+         * 0.3 -> 0.6
+         * 0.4 -> 0.85
+         * 0.5 -> 1.05
+         * 0.6 -> 1.2,
+         * 0.8 -> 1.5
+         * 1.0 -> 1.8
+         * Above 1.0 is linear
+         */
+
+        // Linear interpolated
+        var movementSpeed = moveSpeed switch
+        {
+            >= 1.0   => 1.8 * moveSpeed,
+            >= 0.5   => 1.05 + (moveSpeed - 0.5) * 1.5,
+            >= 0.4   => 0.85 + (moveSpeed - 0.4) * 2,
+            >= 0.3   => 0.6 + (moveSpeed - 0.3) * 2.5,
+            >= 0.2   => 0.3 + (moveSpeed - 0.2) * 3,
+            >= 0.1   => 0.125 + (moveSpeed - 0.1) * 1.75,
+            >= 0.075 => 0.05 + (moveSpeed - 0.075) * 3,
+            _        => 0.0375 // 30 ticks, 37.5ms
+        };
+
+        if (isPassive)
+        {
+            movementSpeed += 0.2;
+        }
+
+        if (!isControlled)
+        {
+            movementSpeed += 0.1;
+        }
+        else if (!bc.Summoned)
+        {
+            if (bc.ControlOrder == OrderType.Follow && bc.ControlTarget == bc.ControlMaster)
+            {
+                movementSpeed *= 0.5;
+            }
+
+            movementSpeed -= 0.075;
+        }
+
+        if (!bc.IsDeadPet && (bc.ReduceSpeedWithDamage || bc.IsSubdued))
         {
             int stats, statsMax;
             if (Core.HS)
             {
-                stats = m_Mobile.Stam;
-                statsMax = m_Mobile.StamMax;
+                stats = bc.Stam;
+                statsMax = bc.StamMax;
             }
             else
             {
-                stats = m_Mobile.Hits;
-                statsMax = m_Mobile.HitsMax;
+                stats = bc.Hits;
+                statsMax = bc.HitsMax;
             }
 
             var offset = statsMax <= 0 ? 1.0 : Math.Max(0, stats) / (double)statsMax;
 
-            if (offset < 1.0)
-            {
-                thinkingSpeed += m_Mobile.PassiveSpeed * (1.0 - offset);
-            }
+            movementSpeed += (1.0 - offset) * 0.8;
         }
 
-        return thinkingSpeed;
+        return movementSpeed;
     }
 
-    public virtual bool CheckMove() => Core.TickCount - NextMove >= 0;
+    public bool CanMoveNow(out long delay) => (delay = NextMove - Core.TickCount) <= FuzzyTimeUntilNextMove;
+
+    public virtual bool CheckMove() => true;
 
     public virtual bool DoMove(Direction d, bool badStateOk = false)
     {
-        var res = DoMoveImpl(d);
+        var res = DoMoveImpl(d, badStateOk);
 
         return res is MoveResult.Success or MoveResult.SuccessAutoTurn || badStateOk && res == MoveResult.BadState;
     }
 
-    public virtual MoveResult DoMoveImpl(Direction d)
+    public virtual MoveResult DoMoveImpl(Direction d, bool badStateOk)
     {
-        if (m_Mobile.Deleted || m_Mobile.Frozen || m_Mobile.Paralyzed ||
+        if (m_Mobile == null || m_Mobile.Deleted || m_Mobile.Frozen || m_Mobile.Paralyzed ||
             m_Mobile.Spell?.IsCasting == true || m_Mobile.DisallowAllMoves)
         {
             return MoveResult.BadState;
@@ -2105,11 +2117,22 @@ public abstract class BaseAI
             return MoveResult.BadState;
         }
 
+        var delay = (int)(TransformMoveDelay(m_Mobile) * 1000);
+
+        if (!CanMoveNow(out var timeUntilMove))
+        {
+            // When bad state is ok, we can still move if the time until move is less than the fuzzy time
+            if (badStateOk)
+            {
+                AIMovementTimerPool.GetTimer(TimeSpan.FromMilliseconds(timeUntilMove), this, d).Start();
+            }
+
+            return MoveResult.BadState;
+        }
+
         // This makes them always move one step, never any direction changes
         // TODO: This is firing off deltas which aren't needed. Look into replacing/removing this
         m_Mobile.Direction = d;
-
-        var delay = (int)(TransformMoveDelay(m_Mobile.CurrentSpeed) * 1000);
         NextMove += delay;
 
         if (Core.TickCount - NextMove > 0)
@@ -2118,21 +2141,31 @@ public abstract class BaseAI
         }
 
         m_Mobile.Pushing = false;
+        var mobDirection = m_Mobile.Direction;
 
+        // Do the actual move
         MoveImpl.IgnoreMovableImpassables = m_Mobile.CanMoveOverObstacles && !m_Mobile.CanDestroyObstacles;
+        var moveResult = m_Mobile.Move(d);
+        MoveImpl.IgnoreMovableImpassables = false;
 
-        if ((m_Mobile.Direction & Direction.Mask) != (d & Direction.Mask))
+        if (moveResult)
         {
-            var v = m_Mobile.Move(d);
-
-            MoveImpl.IgnoreMovableImpassables = false;
-            return v ? MoveResult.Success : MoveResult.Blocked;
+            // If we don't delay combat, then a direction change will happen and cause a glitchy sliding effect.
+            if (m_Mobile.Warmode && m_Mobile.Combatant != null)
+            {
+                var remaining = m_Mobile.NextCombatTime - Core.TickCount;
+                var maxWait = Math.Min(delay, 400);
+                if (remaining < maxWait)
+                {
+                    m_Mobile.NextCombatTime = Core.TickCount + maxWait;
+                }
+            }
+            return MoveResult.Success;
         }
 
-        if (m_Mobile.Move(d))
+        if ((mobDirection & Direction.Mask) != (d & Direction.Mask))
         {
-            MoveImpl.IgnoreMovableImpassables = false;
-            return MoveResult.Success;
+            return MoveResult.Blocked;
         }
 
         var wasPushing = m_Mobile.Pushing;
@@ -2153,14 +2186,13 @@ public abstract class BaseAI
 
             if (map != null)
             {
-                int x = m_Mobile.X, y = m_Mobile.Y;
+                var x = m_Mobile.X;
+                var y = m_Mobile.Y;
                 Movement.Movement.Offset(d, ref x, ref y);
 
+                using var queue = PooledRefQueue<Item>.Create();
                 var destroyables = 0;
-
-                var eable = map.GetItemsInRange(new Point3D(x, y, m_Mobile.Location.Z), 1);
-
-                foreach (var item in eable)
+                foreach (var item in map.GetItemsInRange(new Point2D(x, y), 1))
                 {
                     if (canOpenDoors && item is BaseDoor door && door.Z + door.ItemData.Height > m_Mobile.Z &&
                         m_Mobile.Z + 16 > door.Z)
@@ -2172,7 +2204,7 @@ public abstract class BaseAI
 
                         if (!door.Locked || !door.UseLocks())
                         {
-                            m_Obstacles.Enqueue(door);
+                            queue.Enqueue(door);
                         }
 
                         if (!canDestroyObstacles)
@@ -2188,26 +2220,24 @@ public abstract class BaseAI
                             continue;
                         }
 
-                        m_Obstacles.Enqueue(item);
+                        queue.Enqueue(item);
                         ++destroyables;
                     }
                 }
-
-                eable.Free();
 
                 if (destroyables > 0)
                 {
                     Effects.PlaySound(new Point3D(x, y, m_Mobile.Z), m_Mobile.Map, 0x3B3);
                 }
 
-                if (m_Obstacles.Count > 0)
+                if (queue.Count > 0)
                 {
                     blocked = false; // retry movement
                 }
 
-                while (m_Obstacles.Count > 0)
+                while (queue.Count > 0)
                 {
-                    var item = m_Obstacles.Dequeue();
+                    var item = queue.Dequeue();
 
                     if (item is BaseDoor door)
                     {
@@ -2243,7 +2273,7 @@ public abstract class BaseAI
                                 if (check.Movable && check.ItemData.Impassable &&
                                     cont.Z + check.ItemData.Height > m_Mobile.Z)
                                 {
-                                    m_Obstacles.Enqueue(check);
+                                    queue.Enqueue(check);
                                 }
                             }
 
@@ -2273,16 +2303,13 @@ public abstract class BaseAI
 
                 if (m_Mobile.Move(m_Mobile.Direction))
                 {
-                    MoveImpl.IgnoreMovableImpassables = false;
                     return MoveResult.SuccessAutoTurn;
                 }
             }
 
-            MoveImpl.IgnoreMovableImpassables = false;
             return wasPushing ? MoveResult.BadState : MoveResult.Blocked;
         }
 
-        MoveImpl.IgnoreMovableImpassables = false;
         return MoveResult.Success;
     }
 
@@ -2307,7 +2334,7 @@ public abstract class BaseAI
                 }
                 else
                 {
-                    if (region.GoLocation != Point3D.Zero && Utility.Random(10) > 5)
+                    if (region.GoLocation != Point3D.Zero && Utility.RandomBool())
                     {
                         DoMove(m_Mobile.GetDirectionTo(region.GoLocation));
                     }
@@ -2338,16 +2365,13 @@ public abstract class BaseAI
                     {
                         DoMove(m_Mobile.GetDirectionTo(m_Mobile.Home));
                     }
+                    else if (Utility.Random(10) > 5)
+                    {
+                        DoMove(m_Mobile.GetDirectionTo(m_Mobile.Home));
+                    }
                     else
                     {
-                        if (Utility.Random(10) > 5)
-                        {
-                            DoMove(m_Mobile.GetDirectionTo(m_Mobile.Home));
-                        }
-                        else
-                        {
-                            WalkRandom(iChanceToNotMove, iChanceToDir, 1);
-                        }
+                        WalkRandom(iChanceToNotMove, iChanceToDir, 1);
                     }
                 }
                 else
@@ -2449,7 +2473,7 @@ public abstract class BaseAI
      *  iWantDistMax : The maximum distance we want to be
      *
      */
-    public virtual bool WalkMobileRange(Mobile m, int iSteps, bool bRun, int iWantDistMin, int iWantDistMax)
+    public virtual bool WalkMobileRange(Mobile m, int iSteps, bool run, int iWantDistMin, int iWantDistMax)
     {
         if (m_Mobile.Deleted || m_Mobile.DisallowAllMoves)
         {
@@ -2469,11 +2493,10 @@ public abstract class BaseAI
             if (iCurrDist < iWantDistMin || iCurrDist > iWantDistMax)
             {
                 var needCloser = iCurrDist > iWantDistMax;
-                var needFurther = !needCloser;
 
                 if (needCloser && m_Path != null && m_Path.Goal == m)
                 {
-                    if (m_Path.Follow(bRun, 1))
+                    if (m_Path.Follow(run, 1))
                     {
                         m_Path = null;
                     }
@@ -2481,13 +2504,13 @@ public abstract class BaseAI
                 else
                 {
                     var dirTo = iCurrDist > iWantDistMax ?
-                        m_Mobile.GetDirectionTo(m, bRun) : m.GetDirectionTo(m_Mobile, bRun);
+                        m_Mobile.GetDirectionTo(m, run) : m.GetDirectionTo(m_Mobile, run);
 
                     if (!DoMove(dirTo, true) && needCloser)
                     {
                         m_Path = new PathFollower(m_Mobile, m) { Mover = DoMoveImpl };
 
-                        if (m_Path.Follow(bRun, 1))
+                        if (m_Path.Follow(run, 1))
                         {
                             m_Path = null;
                         }
@@ -2608,9 +2631,7 @@ public abstract class BaseAI
         Mobile enemySummonMob = null;
         var enemySummonVal = double.MinValue;
 
-        var eable = map.GetMobilesInRange(m_Mobile.Location, iRange);
-
-        foreach (var m in eable)
+        foreach (var m in map.GetMobilesInRange(m_Mobile.Location, iRange))
         {
             if (m.Deleted || m.Blessed)
             {
@@ -2702,7 +2723,7 @@ public abstract class BaseAI
             }
 
             // Ignore players with activated honor
-            if (m_Mobile.Combatant != m && pm?.GetVirtues()?.HonorActive == true)
+            if (m_Mobile.Combatant != m && VirtueSystem.GetVirtues(pm)?.HonorActive == true)
             {
                 continue;
             }
@@ -2764,8 +2785,6 @@ public abstract class BaseAI
             }
         }
 
-        eable.Free();
-
         m_Mobile.FocusMob = newFocusMob ?? enemySummonMob;
         return m_Mobile.FocusMob != null;
     }
@@ -2814,9 +2833,7 @@ public abstract class BaseAI
             return;
         }
 
-        var eable = m_Mobile.GetMobilesInRange(m_Mobile.RangePerception);
-
-        foreach (var trg in eable)
+        foreach (var trg in m_Mobile.GetMobilesInRange(m_Mobile.RangePerception))
         {
             if (trg != m_Mobile && trg.Player && trg.Alive && trg.Hidden && trg.AccessLevel == AccessLevel.Player &&
                 m_Mobile.InLOS(trg))
@@ -2845,8 +2862,6 @@ public abstract class BaseAI
                 }
             }
         }
-
-        eable.Free();
     }
 
     public virtual void Deactivate()
@@ -2892,9 +2907,6 @@ public abstract class BaseAI
         }
     }
 
-    /*
-     *  The mobile changed speeds, we must adjust the timer
-     */
     public virtual void OnCurrentSpeedChanged()
     {
         m_Timer.Interval = TimeSpan.FromSeconds(Math.Max(0.008, m_Mobile.CurrentSpeed));
@@ -2902,51 +2914,41 @@ public abstract class BaseAI
 
     private class InternalEntry : ContextMenuEntry
     {
-        private readonly BaseAI m_AI;
-        private readonly Mobile m_From;
-        private readonly BaseCreature m_Mobile;
-        private readonly OrderType m_Order;
+        private readonly OrderType _order;
 
-        public InternalEntry(Mobile from, int number, int range, BaseCreature mobile, BaseAI ai, OrderType order)
-            : base(number, range)
+        public InternalEntry(int number, int range, OrderType order, bool enabled) : base(number, range)
         {
-            m_From = from;
-            m_Mobile = mobile;
-            m_AI = ai;
-            m_Order = order;
-
-            if (mobile.IsDeadPet && order is OrderType.Guard or OrderType.Attack or OrderType.Transfer or OrderType.Drop)
-            {
-                Enabled = false;
-            }
+            _order = order;
+            Enabled = enabled;
         }
 
-        public override void OnClick()
+        public override void OnClick(Mobile from, IEntity target)
         {
-            if (m_Mobile.Deleted || !m_Mobile.Controlled || !m_From.CheckAlive())
+            if (!from.CheckAlive() || target is not BaseCreature { Deleted: not true, Controlled: true } bc)
             {
                 return;
             }
 
-            if (m_Mobile.IsDeadPet && m_Order is OrderType.Guard or OrderType.Attack or OrderType.Transfer or OrderType.Drop)
+            // Just in case
+            if (bc.IsDeadPet && _order is OrderType.Guard or OrderType.Attack or OrderType.Transfer or OrderType.Drop)
             {
                 return;
             }
 
-            var isOwner = m_From == m_Mobile.ControlMaster;
-            var isFriend = !isOwner && m_Mobile.IsPetFriend(m_From);
+            var isOwner = from == bc.ControlMaster;
+            var isFriend = !isOwner && bc.IsPetFriend(from);
 
             if (!isOwner && !isFriend)
             {
                 return;
             }
 
-            if (isFriend && m_Order != OrderType.Follow && m_Order != OrderType.Stay && m_Order != OrderType.Stop)
+            if (isFriend && _order != OrderType.Follow && _order != OrderType.Stay && _order != OrderType.Stop)
             {
                 return;
             }
 
-            switch (m_Order)
+            switch (_order)
             {
                 case OrderType.Follow:
                 case OrderType.Attack:
@@ -2954,37 +2956,37 @@ public abstract class BaseAI
                 case OrderType.Friend:
                 case OrderType.Unfriend:
                     {
-                        if (m_Order == OrderType.Transfer && m_From.HasTrade)
+                        if (_order == OrderType.Transfer && from.HasTrade)
                         {
-                            m_From.SendLocalizedMessage(1010507); // You cannot transfer a pet with a trade pending
+                            from.SendLocalizedMessage(1010507); // You cannot transfer a pet with a trade pending
                         }
-                        else if (m_Order == OrderType.Friend && m_From.HasTrade)
+                        else if (_order == OrderType.Friend && from.HasTrade)
                         {
-                            m_From.SendLocalizedMessage(1070947); // You cannot friend a pet with a trade pending
+                            from.SendLocalizedMessage(1070947); // You cannot friend a pet with a trade pending
                         }
                         else
                         {
-                            m_AI.BeginPickTarget(m_From, m_Order);
+                            bc.AIObject.BeginPickTarget(from, _order);
                         }
 
                         break;
                     }
                 case OrderType.Release:
                     {
-                        if (m_Mobile.Summoned)
+                        if (bc.Summoned)
                         {
                             goto default;
                         }
 
-                        m_From.SendGump(new ConfirmReleaseGump(m_From, m_Mobile));
+                        from.SendGump(new ConfirmReleaseGump(from, bc));
 
                         break;
                     }
                 default:
                     {
-                        if (m_Mobile.CheckControlChance(m_From))
+                        if (bc.CheckControlChance(from))
                         {
-                            m_Mobile.ControlOrder = m_Order;
+                            bc.ControlOrder = _order;
                         }
 
                         break;
@@ -3254,6 +3256,66 @@ public abstract class BaseAI
                 var max = delay * 1100; // 16s at 1000 int, 41s at 400 int, 66s at <250 int
 
                 m_Owner.m_NextDetectHidden = Core.TickCount + Utility.RandomMinMax(min, max);
+            }
+        }
+    }
+
+    public static class AIMovementTimerPool
+    {
+        private const int _poolSize = 1024;
+        private static readonly Queue<AIMovementTimer> _pool = new (_poolSize);
+
+        public static void Configure()
+        {
+            var i = 0;
+            while (i++ < _poolSize)
+            {
+                _pool.Enqueue(new AIMovementTimer());
+            }
+        }
+
+        public static AIMovementTimer GetTimer(TimeSpan delay, BaseAI ai, Direction direction)
+        {
+            AIMovementTimer timer;
+            if (_pool.Count > 0)
+            {
+                timer = _pool.Dequeue();
+            }
+            else
+            {
+                timer = new AIMovementTimer();
+            }
+
+            timer.Set(delay, ai, direction);
+            return timer;
+        }
+
+        public class AIMovementTimer : Timer
+        {
+            public BaseAI AI { get; private set; }
+            public Direction Direction { get; private set; }
+
+            public AIMovementTimer() : base(TimeSpan.Zero)
+            {
+            }
+
+            public void Set(TimeSpan delay, BaseAI ai, Direction direction)
+            {
+                if (Running)
+                {
+                    return;
+                }
+
+                Delay = delay;
+                AI = ai;
+                Direction = direction;
+            }
+
+            protected override void OnTick()
+            {
+                AI?.DoMove(Direction);
+                AI = null;
+                _pool.Enqueue(this);
             }
         }
     }

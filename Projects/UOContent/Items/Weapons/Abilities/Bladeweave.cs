@@ -5,7 +5,7 @@ namespace Server.Items
 {
     public class Bladeweave : WeaponAbility
     {
-        private class BladeWeaveRedirect
+        private struct BladeWeaveRedirect
         {
             public readonly WeaponAbility NewAbility;
             public readonly int ClilocEntry;
@@ -61,7 +61,7 @@ namespace Server.Items
                 5 => new BladeWeaveRedirect(MortalStrike, 1028846),
                 6 => new BladeWeaveRedirect(ParalyzingBlow, 1028848),
                 7 => new BladeWeaveRedirect(Block, 1028853),
-                _ => new BladeWeaveRedirect(Feint, 1028857) //8
+                _ => new BladeWeaveRedirect(Feint, 1028857)
             };
 
         public override bool OnBeforeDamage(Mobile attacker, Mobile defender) =>
@@ -69,18 +69,18 @@ namespace Server.Items
                 ? bwr.NewAbility.OnBeforeDamage(attacker, defender)
                 : base.OnBeforeDamage(attacker, defender);
 
-        public override void OnHit(Mobile attacker, Mobile defender, int damage)
+        public override void OnHit(Mobile attacker, Mobile defender, int damage, WorldLocation worldLocation)
         {
             if (CheckMana(attacker, false))
             {
                 if (_newAttack.TryGetValue(attacker, out var bwr))
                 {
                     attacker.SendLocalizedMessage(1072841, $"#{bwr.ClilocEntry}");
-                    bwr.NewAbility.OnHit(attacker, defender, damage);
+                    bwr.NewAbility.OnHit(attacker, defender, damage, worldLocation);
                 }
                 else
                 {
-                    base.OnHit(attacker, defender, damage);
+                    base.OnHit(attacker, defender, damage, worldLocation);
                 }
 
                 _newAttack.Remove(attacker);

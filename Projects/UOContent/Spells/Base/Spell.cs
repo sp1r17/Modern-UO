@@ -194,7 +194,10 @@ namespace Server.Spells
             (m as BaseCreature)?.OnHarmfulSpell(Caster);
         }
 
-        public virtual int GetNewAosDamage(int bonus, int dice, int sides, Mobile singleTarget)
+        public int GetNewAosDamage(int bonus, int dice, int sides, Mobile singleTarget) =>
+            GetNewAosDamage(bonus, dice, sides, true, singleTarget);
+
+        public virtual int GetNewAosDamage(int bonus, int dice, int sides, bool sdi = true, Mobile singleTarget = null)
         {
             if (singleTarget != null)
             {
@@ -203,17 +206,15 @@ namespace Server.Spells
                     dice,
                     sides,
                     Caster.Player && singleTarget.Player,
+                    sdi,
                     GetDamageScalar(singleTarget)
                 );
             }
 
-            return GetNewAosDamage(bonus, dice, sides, false);
+            return GetNewAosDamage(bonus, dice, sides, sdi, false);
         }
 
-        public virtual int GetNewAosDamage(int bonus, int dice, int sides, bool playerVsPlayer) =>
-            GetNewAosDamage(bonus, dice, sides, playerVsPlayer, 1.0);
-
-        public virtual int GetNewAosDamage(int bonus, int dice, int sides, bool playerVsPlayer, double scalar)
+        public virtual int GetNewAosDamage(int bonus, int dice, int sides, bool playerVsPlayer, bool sdi, double scalar = 1.0)
         {
             var damage = Utility.Dice(dice, sides, bonus) * 100;
 
@@ -224,14 +225,17 @@ namespace Server.Spells
             var intBonus = Caster.Int / 10;
             damageBonus += intBonus;
 
-            var sdiBonus = AosAttributes.GetValue(Caster, AosAttribute.SpellDamage);
-            // PvP spell damage increase cap of 15% from an item's magic property
-            if (playerVsPlayer && sdiBonus > 15)
+            if (sdi)
             {
-                sdiBonus = 15;
-            }
+                var sdiBonus = AosAttributes.GetValue(Caster, AosAttribute.SpellDamage);
+                // PvP spell damage increase cap of 15% from an item's magic property
+                if (playerVsPlayer && sdiBonus > 15)
+                {
+                    sdiBonus = 15;
+                }
 
-            damageBonus += sdiBonus;
+                damageBonus += sdiBonus;
+            }
 
             var context = TransformationSpellHelper.GetContext(Caster);
 
@@ -455,8 +459,6 @@ namespace Server.Spells
             }
         }
 
-        private static ClientVersion _insufficientManaClientChange = new ClientVersion("7.0.65.4");
-
         public bool Cast()
         {
             StartCastTime = Core.TickCount;
@@ -577,7 +579,7 @@ namespace Server.Spells
                         return true;
                     }
                 }
-                else if (Caster.NetState?.Version >= _insufficientManaClientChange)
+                else if (Caster.NetState?.IsKRClient != true && Caster.NetState?.Version >= ClientVersion.Version70654)
                 {
                     // Insufficient mana. You must have at least ~1_MANA_REQUIREMENT~ Mana to use this spell.
                     Caster.LocalOverheadMessage(MessageType.Regular, 0x22, 502625, requiredMana.ToString());

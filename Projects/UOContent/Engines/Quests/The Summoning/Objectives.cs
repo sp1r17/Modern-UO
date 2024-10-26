@@ -5,7 +5,7 @@ namespace Server.Engines.Quests.Doom
 {
     public class CollectBonesObjective : QuestObjective
     {
-        public override object Message => 1050026;
+        public override int Message => 1050026;
 
         public override int MaxProgress => 1000;
 
@@ -46,16 +46,8 @@ namespace Server.Engines.Quests.Doom
         {
             if (CurProgress > 0 && CurProgress < MaxProgress)
             {
-                gump.AddHtmlObject(
-                    70,
-                    130,
-                    300,
-                    100,
-                    1050028,
-                    BaseQuestGump.Blue,
-                    false,
-                    false
-                ); // Victoria has accepted the Daemon bones, but the requirement is not yet met.
+                // Victoria has accepted the Daemon bones, but the requirement is not yet met.
+                gump.AddHtmlObject(70, 130, 300, 100, 1050028, BaseQuestGump.Blue, false, false);
             }
             else
             {
@@ -67,16 +59,8 @@ namespace Server.Engines.Quests.Doom
         {
             if (CurProgress > 0 && CurProgress < MaxProgress)
             {
-                gump.AddHtmlObject(
-                    70,
-                    260,
-                    270,
-                    100,
-                    1050019,
-                    BaseQuestGump.Blue,
-                    false,
-                    false
-                ); // Number of bones collected:
+                // Number of bones collected:
+                gump.AddHtmlObject(70, 260, 270, 100, 1050019, BaseQuestGump.Blue, false, false);
 
                 gump.AddLabel(70, 280, 100, CurProgress.ToString());
                 gump.AddLabel(100, 280, 100, "/");
@@ -102,7 +86,7 @@ namespace Server.Engines.Quests.Doom
 
         public Corpse CorpseWithSkull { get; set; }
 
-        public override object Message => 1050037;
+        public override int Message => 1050037;
 
         public override void CheckProgress()
         {
@@ -124,9 +108,8 @@ namespace Server.Engines.Quests.Doom
 
             if (!from.Alive)
             {
-                from.SendLocalizedMessage(
-                    1050033
-                ); // The devourer lies dead, unfortunately so do you.  You cannot claim your reward while dead.  You will need to face him again.
+                // The devourer lies dead, unfortunately so do you.  You cannot claim your reward while dead.  You will need to face him again.
+                from.SendLocalizedMessage(1050033);
                 ((TheSummoningQuest)System).WaitForSummon = true;
             }
             else
@@ -152,9 +135,8 @@ namespace Server.Engines.Quests.Doom
 
                 if (!hasRights)
                 {
-                    from.SendLocalizedMessage(
-                        1050034
-                    ); // The devourer lies dead.  Unfortunately you did not sufficiently prove your worth in combating the devourer.  Victoria shall summon another incarnation of the devourer to the circle of stones.  Try again noble adventurer.
+                    // The devourer lies dead.  Unfortunately you did not sufficiently prove your worth in combating the devourer.  Victoria shall summon another incarnation of the devourer to the circle of stones.  Try again noble adventurer.
+                    from.SendLocalizedMessage(1050034);
                     ((TheSummoningQuest)System).WaitForSummon = true;
                 }
                 else

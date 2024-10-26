@@ -12,10 +12,10 @@ namespace Server.Items
 
         public override int BaseMana => 20;
 
+        // Disarm is special. Doesn't need tactics when wrestling and tactics is lower than fighting skill.
         public override bool RequiresTactics(Mobile from) => from.Weapon is not BaseWeapon { Skill: SkillName.Wrestling };
 
-        // Disarm is special. Doesnt need tactics when wresling and tactics need is lower than fighting skill.
-        public virtual double GetRequiredTactics(Mobile from)
+        public override double GetRequiredTactics(Mobile from)
         {
             if (from.Weapon is BaseWeapon weapon)
             {
@@ -33,7 +33,7 @@ namespace Server.Items
             return 200.0;
         }
 
-        public override void OnHit(Mobile attacker, Mobile defender, int damage)
+        public override void OnHit(Mobile attacker, Mobile defender, int damage, WorldLocation worldLocation)
         {
             if (!Validate(attacker) || !CheckMana(attacker, true))
             {

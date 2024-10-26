@@ -10,7 +10,7 @@ namespace Server.Items
 
         public override bool RequiresTactics(Mobile from) => false;
 
-        public override void OnHit(Mobile attacker, Mobile defender, int damage)
+        public override void OnHit(Mobile attacker, Mobile defender, int damage, WorldLocation worldLocation)
         {
             if (!Validate(attacker) || !CheckMana(attacker, true))
             {
@@ -102,7 +102,7 @@ namespace Server.Items
 
         public static ForceArrowInfo GetInfo(Mobile attacker, Mobile defender)
         {
-            if (_table.TryGetValue(attacker,out var list))
+            if (_table.TryGetValue(attacker, out var list))
             {
                 foreach (ForceArrowInfo info in list)
                 {

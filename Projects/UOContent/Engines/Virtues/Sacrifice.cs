@@ -35,7 +35,7 @@ public static class SacrificeVirtue
 
     public static void CheckAtrophy(PlayerMobile pm)
     {
-        var virtues = pm.GetVirtues();
+        var virtues = VirtueSystem.GetVirtues(pm);
         if (virtues?.Sacrifice > 0 && CanAtrophy(virtues))
         {
             if (VirtueSystem.Atrophy(pm, VirtueName.Sacrifice, LossAmount))
@@ -67,15 +67,14 @@ public static class SacrificeVirtue
         }
         else
         {
-            var virtues = from.GetVirtues();
+            var virtues = VirtueSystem.GetVirtues(from);
             if (virtues?.AvailableResurrects > 0)
             {
                 /*
                  * We need to wait for them to accept the gump or they can just use
                  * Sacrifice and cancel to have items in their backpack for free.
                  */
-                from.CloseGump<ResurrectGump>();
-                from.SendGump(new ResurrectGump(from, true));
+                from.SendGump(new ResurrectGump(from, fromSacrifice: true));
             }
             else
             {
@@ -124,7 +123,7 @@ public static class SacrificeVirtue
         }
         else
         {
-            var virtues = from.GetOrCreateVirtues();
+            var virtues = VirtueSystem.GetOrCreateVirtues(from);
             if (!CanGain(virtues))
             {
                 from.SendLocalizedMessage(1052016); // You must wait approximately one day before sacrificing again.

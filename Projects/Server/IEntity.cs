@@ -1,6 +1,6 @@
 /*************************************************************************
  * ModernUO                                                              *
- * Copyright 2019-2023 - ModernUO Development Team                       *
+ * Copyright 2019-2024 - ModernUO Development Team                       *
  * Email: hi@modernuo.com                                                *
  * File: IEntity.cs                                                      *
  *                                                                       *
@@ -19,7 +19,7 @@ namespace Server;
 
 public interface IEntity : IPoint3D, ISerializable
 {
-    Point3D Location { get; }
+    Point3D Location { get; set; }
     Map Map { get; }
     void MoveToWorld(Point3D location, Map map);
 
@@ -30,6 +30,12 @@ public interface IEntity : IPoint3D, ISerializable
     bool InRange(Point3D p, int range);
 
     void RemoveItem(Item item);
+
+    bool OnMoveOff(Mobile m);
+
+    bool OnMoveOver(Mobile m);
+
+    public void OnMovement(Mobile m, Point3D oldLocation);
 }
 
 public class Entity : IEntity
@@ -43,19 +49,11 @@ public class Entity : IEntity
 
     public Entity(Serial serial) => Serial = serial;
 
-    DateTime ISerializable.Created { get; set; } = Core.Now;
-
-    DateTime ISerializable.LastSerialized { get; set; } = DateTime.MaxValue;
-
-    long ISerializable.SavePosition { get; set; } = -1;
-
-    BufferWriter ISerializable.SaveBuffer { get; set; }
-
-    public int TypeRef => -1;
+    public DateTime Created { get; set; } = Core.Now;
 
     public Serial Serial { get; }
 
-    public Point3D Location { get; private set; }
+    public Point3D Location { get; set; }
 
     public int X => Location.X;
 
@@ -85,6 +83,14 @@ public class Entity : IEntity
     {
     }
 
+    public bool OnMoveOff(Mobile m) => true;
+
+    public bool OnMoveOver(Mobile m) => true;
+
+    public void OnMovement(Mobile m, Point3D oldLocation)
+    {
+    }
+
     public bool InRange(Point2D p, int range) =>
         p.m_X >= Location.m_X - range
         && p.m_X <= Location.m_X + range
@@ -108,6 +114,10 @@ public class Entity : IEntity
         // Should not actually be saved
         Timer.StartTimer(Delete);
     }
+
+    public byte SerializedThread { get; set; }
+    public int SerializedPosition { get; set; }
+    public int SerializedLength { get; set; }
 
     public void Serialize(IGenericWriter writer)
     {

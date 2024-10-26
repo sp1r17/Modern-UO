@@ -2,7 +2,7 @@ using Server.Targeting;
 
 namespace Server.Spells.Seventh
 {
-    public class FlameStrikeSpell : MagerySpell, ISpellTargetingMobile
+    public class FlameStrikeSpell : MagerySpell, ITargetingSpell<Mobile>
     {
         private static readonly SpellInfo _info = new(
             "Flame Strike",
@@ -54,13 +54,11 @@ namespace Server.Spells.Seventh
 
                 SpellHelper.Damage(this, m, damage, 0, 100, 0, 0, 0);
             }
-
-            FinishSequence();
         }
 
         public override void OnCast()
         {
-            Caster.Target = new SpellTargetMobile(this, TargetFlags.Harmful, Core.ML ? 10 : 12);
+            Caster.Target = new SpellTarget<Mobile>(this, TargetFlags.Harmful);
         }
     }
 }

@@ -1,4 +1,5 @@
 using System;
+using System.Buffers;
 using System.Collections.Generic;
 using ModernUO.Serialization;
 using Server.Gumps;
@@ -26,11 +27,11 @@ namespace Server.Engines.MLQuests.Gumps
         private readonly IRaceChanger m_Owner;
         private readonly Race m_Race;
 
+        public override bool Singleton => true;
+
         public RaceChangeConfirmGump(IRaceChanger owner, PlayerMobile from, Race targetRace)
             : base(50, 50)
         {
-            from.CloseGump<RaceChangeConfirmGump>();
-
             m_Owner = owner;
             m_From = from;
             m_Race = targetRace;
@@ -55,7 +56,7 @@ namespace Server.Engines.MLQuests.Gumps
             AddButton(90, 95, 0xF2, 0xF1, 0);
         }
 
-        public override void OnResponse(NetState sender, RelayInfo info)
+        public override void OnResponse(NetState sender, in RelayInfo info)
         {
             switch (info.ButtonID)
             {
@@ -195,7 +196,7 @@ namespace Server.Engines.MLQuests.Gumps
             return false;
         }
 
-        private static void RaceChangeReply(NetState state, CircularBufferReader reader, int packetLength)
+        private static void RaceChangeReply(NetState state, SpanReader reader)
         {
             if (!m_Pending.TryGetValue(state, out var raceChangeState))
             {

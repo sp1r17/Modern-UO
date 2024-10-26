@@ -36,8 +36,7 @@ public class VirtueGump : Gump
         }
         else if (beholder.Map == beheld.Map && beholder.InRange(beheld, 12))
         {
-            beholder.CloseGump<VirtueGump>();
-            beholder.SendGump(new VirtueGump(beholder, beheld));
+            beholder.SendGump(new VirtueGump(beholder, beheld), true);
         }
     }
 
@@ -113,7 +112,7 @@ public class VirtueGump : Gump
 
     private int GetHueFor(int index)
     {
-        var value = _beheld.GetVirtues()?.GetValue(index) ?? 0;
+        var value = VirtueSystem.GetVirtues((_beheld))?.GetValue(index) ?? 0;
 
         if (value < 4000)
         {
@@ -137,7 +136,7 @@ public class VirtueGump : Gump
         return _table[index * 3 + vl];
     }
 
-    public override void OnResponse(NetState state, RelayInfo info)
+    public override void OnResponse(NetState state, in RelayInfo info)
     {
         if (info.ButtonID == 1 && _beholder == _beheld)
         {

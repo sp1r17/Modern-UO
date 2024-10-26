@@ -140,8 +140,7 @@ namespace Server.Engines.ConPVP
                 return;
             }
 
-            var eable = GetClientsInRange(0);
-            foreach (var ns in eable)
+            foreach (var ns in GetClientsAt())
             {
                 var m = ns.Mobile;
 
@@ -463,34 +462,10 @@ namespace Server.Engines.ConPVP
                         return;
                     }
 
-                    var statics = Map.Tiles.GetStaticTiles(point.X, point.Y, true);
-
-                    if (landTile.ID == 0x244 && statics.Length == 0) // 0x244 = invalid land tile
+                    var foundStatics = false;
+                    foreach (var t in Map.Tiles.GetStaticAndMultiTiles(point.X, point.Y))
                     {
-                        var eable = Map.GetItemsInRange(point, 0);
-
-                        var empty = true;
-                        foreach (var item in eable)
-                        {
-                            if (item != this)
-                            {
-                                empty = false;
-                                break;
-                            }
-                        }
-
-                        eable.Free();
-
-                        if (empty)
-                        {
-                            HitObject(point, landTop, 0);
-                            return;
-                        }
-                    }
-
-                    for (var j = 0; j < statics.Length; j++)
-                    {
-                        var t = statics[j];
+                        foundStatics = true;
 
                         var id = TileData.ItemTable[t.ID & TileData.MaxItemValue];
                         height = id.CalcHeight;
@@ -511,12 +486,30 @@ namespace Server.Engines.ConPVP
                             return;
                         }
                     }
+
+                    if (landTile.ID == 0x244 && foundStatics) // 0x244 = invalid land tile
+                    {
+                        var empty = true;
+                        foreach (var item in Map.GetItemsAt(point))
+                        {
+                            if (item != this)
+                            {
+                                empty = false;
+                                break;
+                            }
+                        }
+
+                        if (empty)
+                        {
+                            HitObject(point, landTop, 0);
+                            return;
+                        }
+                    }
                 }
 
                 var rect = new Rectangle2D(pTop.X, pTop.Y, pBottom.X - pTop.X + 1, pBottom.Y - pTop.Y + 1);
 
-                var area = Map.GetItemsInBounds(rect);
-                foreach (var i in area)
+                foreach (var i in Map.GetItemsInBounds(rect))
                 {
                     if (i == this || i.ItemID >= 0x4000)
                     {
@@ -570,7 +563,6 @@ namespace Server.Engines.ConPVP
                         continue;
                     }
 
-                    area.Free();
                     if (i is BRGoal goal)
                     {
                         var oldLoc = new Point3D(GetWorldLocation());
@@ -591,10 +583,7 @@ namespace Server.Engines.ConPVP
                     return;
                 }
 
-                area.Free();
-
-                var clients = Map.GetClientsInBounds(rect);
-                foreach (var ns in clients)
+                foreach (var ns in Map.GetClientsInBounds(rect))
                 {
                     var m = ns.Mobile;
 
@@ -622,15 +611,11 @@ namespace Server.Engines.ConPVP
                         continue;
                     }
 
-                    clients.Free();
-
                     // TODO: probably need to change this a lot...
                     DoCatch(m);
 
                     return;
                 }
-
-                clients.Free();
 
                 m_PathIdx = pathCheckEnd;
 
@@ -654,14 +639,10 @@ namespace Server.Engines.ConPVP
 
                 var myZ = Map?.GetAverageZ(X, Y) ?? 0;
 
-                var statics = Map?.Tiles?.GetStaticTiles(X, Y, true);
-
-                if (statics != null)
+                if (Map?.Tiles != null)
                 {
-                    for (var j = 0; j < statics.Length; j++)
+                    foreach (var t in Map.Tiles.GetStaticAndMultiTiles(X, Y))
                     {
-                        var t = statics[j];
-
                         var id = TileData.ItemTable[t.ID & TileData.MaxItemValue];
                         height = id.CalcHeight;
 
@@ -672,8 +653,7 @@ namespace Server.Engines.ConPVP
                     }
                 }
 
-                var eable = GetItemsInRange(0);
-                foreach (var item in eable)
+                foreach (var item in GetItemsAt())
                 {
                     if (item.Visible && item != this)
                     {
@@ -684,8 +664,6 @@ namespace Server.Engines.ConPVP
                         }
                     }
                 }
-
-                eable.Free();
 
                 Z = myZ;
                 m_Flying = false;
@@ -944,7 +922,7 @@ namespace Server.Engines.ConPVP
                 ac.Delete();
             }
 
-            this.Clear(Components);
+            ClearComponents();
 
             // stairs
             AddComponent(new AddonComponent(0x74D), -1, +1, -5);
@@ -1079,7 +1057,6 @@ namespace Server.Engines.ConPVP
         {
             if (m_TeamInfo?.Game != null)
             {
-                from.CloseGump<BRBoardGump>();
                 from.SendGump(new BRBoardGump(from, m_TeamInfo.Game));
             }
         }
@@ -1104,7 +1081,7 @@ namespace Server.Engines.ConPVP
         private const int LabelColor32 = 0xFFFFFF;
         private const int BlackColor32 = 0x000000;
 
-        // private BRGame m_Game;
+        public override bool Singleton => true;
 
         public BRBoardGump(Mobile mob, BRGame game, BRTeamInfo section = null) : base(60, 60)
         {
@@ -1169,7 +1146,7 @@ namespace Server.Engines.ConPVP
             AddImage(215, -45, 0xEE40);
             // AddImage( 330, 141, 0x8BA );
 
-            AddBorderedText(22, 22, 294, 20, Center("BR Scoreboard"), LabelColor32, BlackColor32);
+            AddBorderedText(22, 22, 294, 20, "BR Scoreboard".Center(), LabelColor32, BlackColor32);
 
             AddImageTiled(32, 50, 264, 1, 9107);
             AddImageTiled(42, 52, 264, 1, 9157);
@@ -1187,40 +1164,18 @@ namespace Server.Engines.ConPVP
 
                     AddImage(24, 60 + i * 75, teamInfo == ourTeam ? 9730 : 9727, teamInfo.Color - 1);
 
-                    var nameColor = LabelColor32;
-                    var borderColor = BlackColor32;
-
-                    switch (teamInfo.Color)
+                    var borderColor = teamInfo.Color == 0x455 ? LabelColor32 : BlackColor32;
+                    var nameColor = teamInfo.Color switch
                     {
-                        case 0x47E:
-                            nameColor = 0xFFFFFF;
-                            break;
-
-                        case 0x4F2:
-                            nameColor = 0x3399FF;
-                            break;
-
-                        case 0x4F7:
-                            nameColor = 0x33FF33;
-                            break;
-
-                        case 0x4FC:
-                            nameColor = 0xFF00FF;
-                            break;
-
-                        case 0x021:
-                            nameColor = 0xFF3333;
-                            break;
-
-                        case 0x01A:
-                            nameColor = 0xFF66FF;
-                            break;
-
-                        case 0x455:
-                            nameColor = 0x333333;
-                            borderColor = 0xFFFFFF;
-                            break;
-                    }
+                        0x47E => 0xFFFFFF,
+                        0x4F2 => 0x3399FF,
+                        0x4F7 => 0x33FF33,
+                        0x4FC => 0xFF00FF,
+                        0x021 => 0xFF3333,
+                        0x01A => 0xFF66FF,
+                        0x455 => 0x333333,
+                        _     => LabelColor32
+                    };
 
                     AddBorderedText(
                         60,
@@ -1263,10 +1218,6 @@ namespace Server.Engines.ConPVP
             AddButton(314, height - 42, 247, 248, 1);
         }
 
-        public string Center(string text) => $"<CENTER>{text}</CENTER>";
-
-        public string Color(string text, int color) => $"<BASEFONT COLOR=#{color:X6}>{text}</BASEFONT>";
-
         private void AddBorderedText(int x, int y, int width, int height, string text, int color, int borderColor)
         {
             AddColoredText(x - 1, y - 1, width, height, text, borderColor);
@@ -1278,14 +1229,7 @@ namespace Server.Engines.ConPVP
 
         private void AddColoredText(int x, int y, int width, int height, string text, int color)
         {
-            if (color == 0)
-            {
-                AddHtml(x, y, width, height, text);
-            }
-            else
-            {
-                AddHtml(x, y, width, height, Color(text, color));
-            }
+            AddHtml(x, y, width, height, color == 0 ? text : text.Color(color));
         }
     }
 
@@ -1737,23 +1681,20 @@ namespace Server.Engines.ConPVP
 
             var hadBomb = false;
 
-            corpse.FindItemsByType<BRBomb>(false)
-                .ForEach(
-                    bomb =>
-                    {
-                        hadBomb = true;
-                        bomb.DropTo(mob, killer);
-                    }
-                );
+            foreach (var bomb in corpse.EnumerateItemsByType<BRBomb>(false))
+            {
+                hadBomb = true;
+                bomb.DropTo(mob, killer);
+            }
 
-            mob.Backpack?.FindItemsByType<BRBomb>(false)
-                .ForEach(
-                    bomb =>
-                    {
-                        hadBomb = true;
-                        bomb.DropTo(mob, killer);
-                    }
-                );
+            if (mob.Backpack != null)
+            {
+                foreach (var bomb in mob.Backpack.EnumerateItemsByType<BRBomb>(false))
+                {
+                    hadBomb = true;
+                    bomb.DropTo(mob, killer);
+                }
+            }
 
             if (killer?.Player == true)
             {
@@ -1777,7 +1718,6 @@ namespace Server.Engines.ConPVP
                 }
             }
 
-            mob.CloseGump<BRBoardGump>();
             mob.SendGump(new BRBoardGump(mob, this));
 
             m_Context.Requip(mob, corpse);
@@ -1976,7 +1916,6 @@ namespace Server.Engines.ConPVP
 
                     if (dp?.Mobile != null)
                     {
-                        dp.Mobile.CloseGump<BRBoardGump>();
                         dp.Mobile.SendGump(new BRBoardGump(dp.Mobile, this));
                     }
                 }

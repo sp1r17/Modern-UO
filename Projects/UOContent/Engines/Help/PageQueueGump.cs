@@ -24,16 +24,23 @@ namespace Server.Engines.Help
 
             AddBackground(0, 0, 92, 75, 0xA3C);
 
-            AddImageTiled(5, 7, 82, 61, 0xA40);
-            AddAlphaRegion(5, 7, 82, 61);
+            if (mobile?.NetState?.IsEnhancedClient == true)
+            {
+                AddBackground(5, 7, 82, 61, 9300);
+            }
+            else
+            {
+                AddImageTiled(5, 7, 82, 61, 0xA40);
+                AddAlphaRegion(5, 7, 82, 61);
+            }
 
             AddImageTiled(9, 11, 21, 53, 0xBBC);
 
             AddButton(10, 12, 0x7D2, 0x7D2, 0);
-            AddHtmlLocalized(34, 28, 65, 24, 3001002, 0xFFFFFF); // Message
+            AddHtmlLocalized(34, 28, 65, 24, 3001002, 0x7FFF); // Message
         }
 
-        public override void OnResponse(NetState state, RelayInfo info)
+        public override void OnResponse(NetState state, in RelayInfo info)
         {
             m_Mobile.SendGump(new PageResponseGump(m_Mobile, m_Name, m_Text));
 
@@ -105,15 +112,13 @@ namespace Server.Engines.Help
             }
         }
 
-        public override void OnResponse(NetState state, RelayInfo info)
+        public override void OnResponse(NetState state, in RelayInfo info)
         {
             if (info.ButtonID >= 1 && info.ButtonID <= m_List.Length)
             {
                 if (PageQueue.List.IndexOf(m_List[info.ButtonID - 1]) >= 0)
                 {
-                    var g = new PageEntryGump(state.Mobile, m_List[info.ButtonID - 1]);
-
-                    g.SendTo(state);
+                    state.SendGump(new PageEntryGump(state.Mobile, m_List[info.ButtonID - 1]));
                 }
                 else
                 {
@@ -217,12 +222,12 @@ namespace Server.Engines.Help
         private readonly Mobile m_From;
         private readonly PredefinedResponse m_Response;
 
+        public override bool Singleton => true;
+
         public PredefGump(Mobile from, PredefinedResponse response) : base(30, 30)
         {
             m_From = from;
             m_Response = response;
-
-            from.CloseGump<PredefGump>();
 
             var canEdit = from.AccessLevel >= AccessLevel.GameMaster;
 
@@ -230,10 +235,17 @@ namespace Server.Engines.Help
 
             if (response == null)
             {
-                AddImageTiled(0, 0, 410, 448, 0xA40);
-                AddAlphaRegion(1, 1, 408, 446);
+                if (from.NetState?.IsEnhancedClient == true)
+                {
+                    AddBackground(1, 1, 408, 446, 9300);
+                }
+                else
+                {
+                    AddImageTiled(0, 0, 410, 448, 0xA40);
+                    AddAlphaRegion(1, 1, 408, 446);
+                }
 
-                AddHtml(10, 10, 390, 20, Color(Center("Predefined Responses"), LabelColor32));
+                AddHtml(10, 10, 390, 20, "Predefined Responses".Center(LabelColor32));
 
                 var list = PredefinedResponse.List;
 
@@ -294,32 +306,36 @@ namespace Server.Engines.Help
                     }
 
                     AddButton(12, 44 + i % 5 * 80, 0xFAB, 0xFAD, 1);
-                    AddHtml(45, 44 + i % 5 * 80, 200, 20, Color("New Response", LabelColor32));
+                    AddHtml(45, 44 + i % 5 * 80, 200, 20, "New Response".Color(LabelColor32));
                 }
             }
             else if (canEdit)
             {
                 AddImageTiled(0, 0, 410, 250, 0xA40);
-                AddAlphaRegion(1, 1, 408, 248);
 
-                AddHtml(10, 10, 390, 20, Color(Center("Predefined Response Editor"), LabelColor32));
+                if (from.NetState?.IsEnhancedClient == true)
+                {
+                    AddBackground(1, 1, 408, 248, 9300);
+                }
+                else
+                {
+                    AddAlphaRegion(1, 1, 408, 248);
+                }
+
+                AddHtml(10, 10, 390, 20, "Predefined Response Editor".Center(LabelColor32));
 
                 AddButton(10, 40, 0xFB1, 0xFB3, 1);
-                AddHtml(45, 40, 200, 20, Color("Remove", LabelColor32));
+                AddHtml(45, 40, 200, 20, "Remove".Color(LabelColor32));
 
                 AddButton(10, 70, 0xFA5, 0xFA7, 2);
-                AddHtml(45, 70, 200, 20, Color("Title:", LabelColor32));
+                AddHtml(45, 70, 200, 20, "Title:".Color(LabelColor32));
                 AddTextInput(10, 90, 300, 20, 0, response.Title);
 
                 AddButton(10, 120, 0xFA5, 0xFA7, 3);
-                AddHtml(45, 120, 200, 20, Color("Message:", LabelColor32));
+                AddHtml(45, 120, 200, 20, "Message:".Color(LabelColor32));
                 AddTextInput(10, 140, 390, 100, 1, response.Message);
             }
         }
-
-        public string Center(string text) => $"<CENTER>{text}</CENTER>";
-
-        public string Color(string text, int color) => $"<BASEFONT COLOR=#{color:X6}>{text}</BASEFONT>";
 
         public void AddTextInput(int x, int y, int w, int h, int id, string def)
         {
@@ -328,7 +344,7 @@ namespace Server.Engines.Help
             AddTextEntry(x + 3, y + 1, w - 4, h - 2, 0x480, id, def);
         }
 
-        public override void OnResponse(NetState sender, RelayInfo info)
+        public override void OnResponse(NetState sender, in RelayInfo info)
         {
             if (m_From.AccessLevel < AccessLevel.Administrator)
             {
@@ -414,12 +430,7 @@ namespace Server.Engines.Help
                         }
                     case 2:
                         {
-                            var te = info.GetTextEntry(0);
-
-                            if (te != null)
-                            {
-                                m_Response.Title = te.Text;
-                            }
+                            m_Response.Title = info.GetTextEntry(0);
 
                             PredefinedResponse.Save();
                             m_From.SendGump(new PredefGump(m_From, m_Response));
@@ -428,12 +439,7 @@ namespace Server.Engines.Help
                         }
                     case 3:
                         {
-                            var te = info.GetTextEntry(1);
-
-                            if (te != null)
-                            {
-                                m_Response.Message = te.Text;
-                            }
+                            m_Response.Message = info.GetTextEntry(1);
 
                             PredefinedResponse.Save();
                             m_From.SendGump(new PredefGump(m_From, m_Response));
@@ -472,8 +478,15 @@ namespace Server.Engines.Help
 
             AddPage(0);
 
-            AddImageTiled(0, 0, 410, 456, 0xA40);
-            AddAlphaRegion(1, 1, 408, 454);
+            if (m.NetState?.IsEnhancedClient == true)
+            {
+                AddBackground(1, 1, 408, 454, 9300);
+            }
+            else
+            {
+                AddImageTiled(0, 0, 410, 456, 0xA40);
+                AddAlphaRegion(1, 1, 408, 454);
+            }
 
             AddPage(1);
 
@@ -578,12 +591,10 @@ namespace Server.Engines.Help
 
         public void Resend(NetState state)
         {
-            var g = new PageEntryGump(m_Mobile, m_Entry);
-
-            g.SendTo(state);
+            state.SendGump(new PageEntryGump(m_Mobile, m_Entry));
         }
 
-        public override void OnResponse(NetState state, RelayInfo info)
+        public override void OnResponse(NetState state, in RelayInfo info)
         {
             if (info.ButtonID != 0 && PageQueue.List.IndexOf(m_Entry) < 0)
             {
@@ -598,9 +609,7 @@ namespace Server.Engines.Help
                     {
                         if (m_Entry.Handler != state.Mobile)
                         {
-                            var g = new PageQueueGump();
-
-                            g.SendTo(state);
+                            state.SendGump(new PageQueueGump());
                         }
 
                         break;
@@ -707,10 +716,7 @@ namespace Server.Engines.Help
                             PageQueue.Remove(m_Entry);
 
                             state.Mobile.SendMessage("You delete the page.");
-
-                            var g = new PageQueueGump();
-
-                            g.SendTo(state);
+                            state.SendGump(new PageQueueGump());
                         }
                         else
                         {
@@ -749,10 +755,7 @@ namespace Server.Engines.Help
                             m_Entry.Handler = null;
 
                             state.Mobile.SendMessage("You mark the page as handled, and remove it from the queue.");
-
-                            var g = new PageQueueGump();
-
-                            g.SendTo(state);
+                            state.SendGump(new PageQueueGump());
                         }
                         else
                         {
@@ -770,7 +773,7 @@ namespace Server.Engines.Help
                         if (text != null)
                             // m_Entry.AddResponse(state.Mobile, "[Response] " + text.Text);
                         {
-                            m_Entry.Sender.SendGump(new MessageSentGump(m_Entry.Sender, state.Mobile.Name, text.Text));
+                            m_Entry.Sender.SendGump(new MessageSentGump(m_Entry.Sender, state.Mobile.Name, text));
                         }
                         // m_Entry.Sender.SendMessage( 0x482, "{0} tells you:", state.Mobile.Name );
                         // m_Entry.Sender.SendMessage( 0x482, text.Text );

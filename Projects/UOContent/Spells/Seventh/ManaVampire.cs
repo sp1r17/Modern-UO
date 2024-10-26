@@ -3,7 +3,7 @@ using Server.Targeting;
 
 namespace Server.Spells.Seventh
 {
-    public class ManaVampireSpell : MagerySpell, ISpellTargetingMobile
+    public class ManaVampireSpell : MagerySpell, ITargetingSpell<Mobile>
     {
         private static readonly SpellInfo _info = new(
             "Mana Vampire",
@@ -45,19 +45,19 @@ namespace Server.Spells.Seventh
                         toDrain /= 2;
                     }
                 }
+                else if (CheckResisted(m))
+                {
+                    m.SendLocalizedMessage(501783); // You feel yourself resisting magical energy.
+                }
                 else
                 {
-                    if (CheckResisted(m))
-                    {
-                        m.SendLocalizedMessage(501783); // You feel yourself resisting magical energy.
-                    }
-                    else
-                    {
-                        toDrain = m.Mana;
-                    }
+                    toDrain = m.Mana;
                 }
 
-                m.Mana -= Math.Clamp(toDrain, 0, Math.Min(m.Mana, Caster.ManaMax - Caster.Mana));
+                // Will not drain more than the target has currently
+                toDrain = Math.Min(m.Mana, toDrain);
+                m.Mana -= toDrain;
+
                 Caster.Mana += toDrain;
 
                 if (Core.AOS)
@@ -75,13 +75,11 @@ namespace Server.Spells.Seventh
 
                 HarmfulSpell(m);
             }
-
-            FinishSequence();
         }
 
         public override void OnCast()
         {
-            Caster.Target = new SpellTargetMobile(this, TargetFlags.Harmful, Core.ML ? 10 : 12);
+            Caster.Target = new SpellTarget<Mobile>(this, TargetFlags.Harmful);
         }
 
         public override double GetResistPercent(Mobile target) => 98.0;

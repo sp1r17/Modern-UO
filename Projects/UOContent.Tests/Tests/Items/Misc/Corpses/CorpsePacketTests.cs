@@ -1,4 +1,3 @@
-using System;
 using Server;
 using Server.Items;
 using Server.Network;
@@ -6,14 +5,14 @@ using Server.Tests;
 using Server.Tests.Network;
 using Xunit;
 
-namespace UOContent.Tests
+namespace UOContent.Tests;
+
+[Collection("Sequential Tests")]
+public class CorpsePacketTests : IClassFixture<ServerFixture>
 {
-    [Collection("Sequential Tests")]
-    public class CorpsePacketTests : IClassFixture<ServerFixture>
+    [Fact]
+    public void TestCorpseEquipPacket()
     {
-        [Fact]
-        public void TestCorpseEquipPacket()
-        {
             var m = new Mobile((Serial)0x1);
             m.DefaultMobileInit();
 
@@ -27,15 +26,15 @@ namespace UOContent.Tests
             var ns = PacketTestUtilities.CreateTestNetState();
             ns.SendCorpseEquip(m, c);
 
-            var result = ns.SendPipe.Reader.TryRead();
-            AssertThat.Equal(result.Buffer[0].AsSpan(0), expected);
+        var result = ns.SendPipe.Reader.AvailableToRead();
+        AssertThat.Equal(result, expected);
         }
 
-        [Theory]
-        [InlineData(ProtocolChanges.None)]
-        [InlineData(ProtocolChanges.ContainerGridLines)]
-        public void TestCorpseContainerPacket(ProtocolChanges changes)
-        {
+    [Theory]
+    [InlineData(ProtocolChanges.None)]
+    [InlineData(ProtocolChanges.ContainerGridLines)]
+    public void TestCorpseContainerPacket(ProtocolChanges changes)
+    {
             var m = new Mobile((Serial)0x1);
             m.DefaultMobileInit();
 
@@ -51,8 +50,7 @@ namespace UOContent.Tests
 
             ns.SendCorpseContent(m, c);
 
-            var result = ns.SendPipe.Reader.TryRead();
-            AssertThat.Equal(result.Buffer[0].AsSpan(0), expected);
+        var result = ns.SendPipe.Reader.AvailableToRead();
+        AssertThat.Equal(result, expected);
         }
-    }
 }

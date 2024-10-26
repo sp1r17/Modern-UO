@@ -1,8 +1,8 @@
 namespace Server.Items
 {
     /// <summary>
-    ///     Strike your opponent with great force, partially bypassing their armor and inflicting greater damage. Requires either
-    ///     Bushido or Ninjitsu skill
+    ///     Strike your opponent with great force, partially bypassing their armor and inflicting greater damage.
+    ///     Requires either Bushido or Ninjitsu skill.
     /// </summary>
     public class ArmorPierce : WeaponAbility
     {
@@ -12,7 +12,7 @@ namespace Server.Items
         public override bool RequiresSE => true;
         public override bool RequiresSecondarySkill(Mobile from) => true;
 
-        public override void OnHit(Mobile attacker, Mobile defender, int damage)
+        public override void OnHit(Mobile attacker, Mobile defender, int damage, WorldLocation worldLocation)
         {
             if (!Validate(attacker) || !CheckMana(attacker, true))
             {

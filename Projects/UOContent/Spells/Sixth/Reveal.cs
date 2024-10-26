@@ -2,7 +2,7 @@ using Server.Mobiles;
 
 namespace Server.Spells.Sixth
 {
-    public class RevealSpell : MagerySpell, ISpellTargetingPoint3D
+    public class RevealSpell : MagerySpell, ITargetingSpell<IPoint3D>
     {
         private static readonly SpellInfo _info = new(
             "Reveal",
@@ -29,12 +29,8 @@ namespace Server.Spells.Sixth
 
                 if (map != null)
                 {
-                    var eable = map.GetMobilesInRange(
-                        new Point3D(p),
-                        1 + (int)(Caster.Skills.Magery.Value / 20.0)
-                    );
-
-                    foreach (var m in eable)
+                    var range = 1 + (int)(Caster.Skills.Magery.Value / 20.0);
+                    foreach (var m in map.GetMobilesInRange(new Point3D(p), range))
                     {
                         if (m is ShadowKnight && (m.X != p.X || m.Y != p.Y))
                         {
@@ -53,17 +49,13 @@ namespace Server.Spells.Sixth
                         m.FixedParticles(0x375A, 9, 20, 5049, EffectLayer.Head);
                         m.PlaySound(0x1FD);
                     }
-
-                    eable.Free();
                 }
             }
-
-            FinishSequence();
         }
 
         public override void OnCast()
         {
-            Caster.Target = new SpellTargetPoint3D(this, range: Core.ML ? 10 : 12);
+            Caster.Target = new SpellTarget<IPoint3D>(this, allowGround: true);
         }
 
         // Reveal uses magery and detect hidden vs. hide and stealth

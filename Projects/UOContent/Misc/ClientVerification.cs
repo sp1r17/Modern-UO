@@ -1,4 +1,5 @@
 using System;
+using System.Numerics;
 using Server.Gumps;
 using Server.Logging;
 using Server.Mobiles;
@@ -17,12 +18,17 @@ namespace Server.Misc
 
         private static TimeSpan _ageLeniency;
         private static TimeSpan _gameTimeLeniency;
+        private static string _allowedClientsMessage;
+
+        public static ClientType AllowedClientTypes { get; private set; }
+
+        public static bool AllowClassic => (AllowedClientTypes & ClientType.Classic) != 0;
+        public static bool AllowUOTD => (AllowedClientTypes & ClientType.UOTD) != 0;
+        public static bool AllowKR => (AllowedClientTypes & ClientType.KR) != 0;
+        public static bool AllowSA => (AllowedClientTypes & ClientType.SA) != 0;
 
         public static ClientVersion MinRequired { get; private set; }
         public static ClientVersion MaxRequired { get; private set; }
-
-        public static bool AllowRegular => true;
-        public static bool AllowUOTD => false;
         public static TimeSpan KickDelay { get; private set; }
 
         public static void Configure()
@@ -39,12 +45,12 @@ namespace Server.Misc
                 TimeSpan.FromHours(25)
             );
             KickDelay = ServerConfiguration.GetOrUpdateSetting("clientVerification.kickDelay", TimeSpan.FromSeconds(20.0));
+            AllowedClientTypes = ServerConfiguration.GetSetting("clientVerification.allowedClientTypes", ClientType.Classic | ClientType.SA);
+            _allowedClientsMessage = GetAllowedClientsString(AllowedClientTypes);
         }
 
         public static void Initialize()
         {
-            EventSink.ClientVersionReceived += EventSink_ClientVersionReceived;
-
             if (MinRequired == null && MaxRequired == null)
             {
                 MinRequired = UOClient.ServerClientVersion;
@@ -81,7 +87,35 @@ namespace Server.Misc
             return _versionExpression;
         }
 
-        private static void EventSink_ClientVersionReceived(NetState state, ClientVersion version)
+        private static string GetAllowedClientsString(ClientType allowedClients)
+        {
+            // Get total number of allowed clients
+            var totalAllowedClients = BitOperations.PopCount((uint)allowedClients) - 1;
+            if (totalAllowedClients == 0)
+            {
+                return "There are no clients supported at this time.";
+            }
+
+            using var builder = ValueStringBuilder.Create();
+            builder.Append("Please connect with a ");
+            uint flags = 0;
+            var i = 0;
+            while (flags < (uint)allowedClients)
+            {
+                flags = 1u << i;
+                if (i > 0)
+                {
+                    builder.Append(i == totalAllowedClients ? " or " : ", ");
+                }
+
+                builder.Append(((ClientType)flags).TypeName());
+                i++;
+            }
+
+            return builder.ToString();
+        }
+
+        public static void ClientVersionReceived(NetState state, ClientVersion version)
         {
             var sb = ValueStringBuilder.Create();
 
@@ -97,22 +131,23 @@ namespace Server.Misc
                                     mobile.GameTime > _gameTimeLeniency;
 
             bool shouldKick = false;
+            bool isKRClient = version.Type == ClientType.KR;
 
-            if (MinRequired != null && version < MinRequired)
+            if (!isKRClient && MinRequired != null && version < MinRequired)
             {
                 sb.Append($"This server doesn't support clients older than {MinRequired}.");
                 shouldKick = strictRequirement;
             }
-            else if (MaxRequired != null && version > MaxRequired)
+            else if (!isKRClient && MaxRequired != null && version > MaxRequired)
             {
                 sb.Append($"This server doesn't support clients newer than {MaxRequired}.");
                 shouldKick = strictRequirement;
             }
-            else if (!AllowRegular || !AllowUOTD)
+            else
             {
-                if (!AllowRegular && version.Type == ClientType.Regular)
+                if (!AllowClassic && version.Type == ClientType.Classic)
                 {
-                    sb.Append("This server does not allow regular clients to connect.");
+                    sb.Append("This server does not allow classic clients to connect.");
                     shouldKick = true;
                 }
                 else if (!AllowUOTD && state.IsUOTDClient)
@@ -120,21 +155,20 @@ namespace Server.Misc
                     sb.Append("This server does not allow UO:TD clients to connect.");
                     shouldKick = true;
                 }
+                else if (!AllowKR && version.Type == ClientType.KR)
+                {
+                    sb.Append("This server does not allow UO:KR clients to connect.");
+                    shouldKick = true;
+                }
+                else if (!AllowSA && version.Type == ClientType.SA)
+                {
+                    sb.Append("This server does not allow UO:SA clients to connect.");
+                    shouldKick = true;
+                }
 
                 if (sb.Length > 0)
                 {
-                    if (AllowRegular && AllowUOTD)
-                    {
-                        sb.Append(" You can use regular or UO:TD clients.");
-                    }
-                    else if (AllowRegular)
-                    {
-                        sb.Append(" You can use regular clients.");
-                    }
-                    else if (AllowUOTD)
-                    {
-                        sb.Append(" You can use UO:TD clients.");
-                    }
+                    sb.Append(_allowedClientsMessage);
                 }
             }
 
@@ -145,7 +179,7 @@ namespace Server.Misc
 
             if (shouldKick)
             {
-                state.Mobile.SendMessage(0x22, $"You will be disconnected in {KickDelay.TotalSeconds} seconds.");
+                state.Mobile.SendMessage(0x22, $"You will be disconnected in {KickDelay.TotalSeconds:F0} seconds.");
                 Timer.StartTimer(KickDelay, () => OnKick(state));
                 return;
             }
@@ -184,7 +218,7 @@ namespace Server.Misc
             }
         }
 
-        private static void KickMessage(Mobile from, bool okay)
+        private static void KickMessage(Mobile from)
         {
             from.SendMessage("You will be reminded of this again.");
 
@@ -202,23 +236,7 @@ namespace Server.Misc
         {
             if (m.NetState != null)
             {
-                Gump g = new WarningGump(
-                    1060637,
-                    30720,
-                    $"Your client is invalid.<br>This server recommends that your client version is {GetVersionExpression()}.<br> <br>You are currently using version {m.NetState.Version}.",
-                    0xFFC000,
-                    480,
-                    360,
-                    okay => KickMessage(m, okay),
-                    false
-                )
-                {
-                    Draggable = false,
-                    Closable = false,
-                    Resizable = false,
-                };
-
-                m.SendGump(g);
+                m.SendGump(new AnnoyGump(m.NetState.Version, () => KickMessage(m)));
             }
         }
 
@@ -229,6 +247,26 @@ namespace Server.Misc
             Annoy,
             LenientKick,
             Kick
+        }
+
+        private class AnnoyGump : StaticNoticeGump<AnnoyGump>
+        {
+            public override int Width => 480;
+            public override int Height => 360;
+
+            public override string Content { get; }
+
+            public AnnoyGump(ClientVersion version, Action callback) : base(callback) =>
+                Content = $"Your client is invalid.<br>This server recommends that your client version is {GetVersionExpression()}.<br><br>You are currently using version {version}.";
+
+            protected override void BuildLayout(ref StaticGumpBuilder builder)
+            {
+                builder.SetNoDispose();
+                builder.SetNoResize();
+                builder.SetNoMove();
+
+                base.BuildLayout(ref builder);
+            }
         }
     }
 }

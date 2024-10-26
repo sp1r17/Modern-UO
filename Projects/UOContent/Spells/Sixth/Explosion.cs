@@ -3,7 +3,7 @@ using Server.Targeting;
 
 namespace Server.Spells.Sixth
 {
-    public class ExplosionSpell : MagerySpell, ISpellTargetingMobile
+    public class ExplosionSpell : MagerySpell, ITargetingSpell<Mobile>
     {
         private static readonly SpellInfo _info = new(
             "Explosion",
@@ -39,15 +39,13 @@ namespace Server.Spells.Sixth
                 SpellHelper.Turn(Caster, m);
                 SpellHelper.CheckReflect((int)Circle, Caster, ref m);
 
-                var t = new InternalTimer(this, Caster, defender, m).Start();
+                new InternalTimer(this, Caster, defender, m).Start();
             }
-
-            FinishSequence();
         }
 
         public override void OnCast()
         {
-            Caster.Target = new SpellTargetMobile(this, TargetFlags.Harmful, Core.ML ? 10 : 12);
+            Caster.Target = new SpellTarget<Mobile>(this, TargetFlags.Harmful);
         }
 
         private class InternalTimer : Timer
@@ -70,6 +68,11 @@ namespace Server.Spells.Sixth
 
             protected override void OnTick()
             {
+                if (_defender.Deleted || !_defender.Alive)
+                {
+                    return;
+                }
+
                 if (_attacker.HarmfulCheck(_defender))
                 {
                     double damage;

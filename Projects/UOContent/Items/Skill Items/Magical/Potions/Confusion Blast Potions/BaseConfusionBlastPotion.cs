@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using ModernUO.Serialization;
+using Server.Collections;
 using Server.Misc;
 using Server.Mobiles;
 using Server.Spells;
@@ -20,12 +21,19 @@ public abstract partial class BaseConfusionBlastPotion : BasePotion
 
     public override bool RequireFreeHand => false;
 
-    public override void Drink(Mobile from)
+    public override bool IsThrowablePotion => true;
+
+    public override bool CanDrink(Mobile from)
     {
+        if (!base.CanDrink(from))
+        {
+            return false;
+        }
+
         if (Core.AOS && (from.Paralyzed || from.Frozen || from.Spell?.IsCasting == true))
         {
             from.SendLocalizedMessage(1062725); // You can not use that potion while paralyzed.
-            return;
+            return false;
         }
 
         var delay = GetDelay(from);
@@ -34,17 +42,17 @@ public abstract partial class BaseConfusionBlastPotion : BasePotion
         {
             // You cannot use that for another ~1_NUM~ ~2_TIMEUNITS~
             from.SendLocalizedMessage(1072529, $"{delay}\t{(delay > 1 ? "seconds." : "second.")}");
-            return;
+            return false;
         }
 
-        if (from.Target is ThrowTarget targ && targ.Potion == this)
-        {
-            return;
-        }
+        return (from.Target as ThrowTarget)?.Potion != this;
+    }
 
+    public override void Drink(Mobile from)
+    {
         from.RevealingAction();
 
-        _users ??= new HashSet<Mobile>();
+        _users ??= [];
         _users.Add(from);
 
         from.Target = new ThrowTarget(this);
@@ -59,18 +67,23 @@ public abstract partial class BaseConfusionBlastPotion : BasePotion
 
         Consume();
 
-        if (_users != null)
+        if (_users is { Count: > 0 })
         {
-            // Check if any other players are using this potion
+            using var usersQueue = PooledRefQueue<Mobile>.Create();
             foreach (var user in _users)
             {
                 if ((user.Target as ThrowTarget)?.Potion == this)
                 {
-                    Target.Cancel(from);
+                    usersQueue.Enqueue(user);
                 }
             }
 
             _users.Clear();
+
+            while (usersQueue.Count > 0)
+            {
+                Target.Cancel(usersQueue.Dequeue());
+            }
         }
 
         // Effects
@@ -82,13 +95,8 @@ public abstract partial class BaseConfusionBlastPotion : BasePotion
 
         foreach (var mobile in map.GetMobilesInRange(loc, Radius))
         {
-            if (mobile is BaseCreature mon)
+            if (mobile is BaseCreature { Controlled: false, Summoned: false } mon)
             {
-                if (mon.Controlled || mon.Summoned)
-                {
-                    continue;
-                }
-
                 mon.Pacify(from, Core.Now + TimeSpan.FromSeconds(5.0)); // TODO check
             }
         }
@@ -120,7 +128,7 @@ public abstract partial class BaseConfusionBlastPotion : BasePotion
     {
         if (_delay.TryGetValue(m, out var timer) && timer.Next > Core.Now)
         {
-            return (int)(timer.Next - Core.Now).TotalSeconds;
+            return (int)Math.Round((timer.Next - Core.Now).TotalSeconds);
         }
 
         return 0;
@@ -175,5 +183,7 @@ public abstract partial class BaseConfusionBlastPotion : BasePotion
             Effects.SendMovingEffect(from, to, 0xF0D, 7, 0, false, false, Potion.Hue);
             Timer.StartTimer(TimeSpan.FromSeconds(1.0), () => Potion.Explode(from, loc, map));
         }
+
+        protected override void OnTargetFinish(Mobile from) => Potion._users.Remove(from);
     }
 }

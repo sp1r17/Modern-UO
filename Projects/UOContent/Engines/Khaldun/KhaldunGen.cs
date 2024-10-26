@@ -1,5 +1,4 @@
 using System;
-using System.Linq;
 using Server.Items;
 
 namespace Server.Commands
@@ -8,61 +7,51 @@ namespace Server.Commands
     {
         private static int m_Count;
 
-        public static void Initialize()
+        public static void Configure()
         {
-            CommandSystem.Register("GenKhaldun", AccessLevel.Administrator, GenKhaldun_OnCommand);
+            CommandSystem.Register("GenKhaldun", AccessLevel.Developer, GenKhaldun_OnCommand);
         }
 
         public static bool FindMorphItem(int x, int y, int z, int inactiveItemID, int activeItemID)
         {
-            var eable = Map.Felucca.GetItemsInRange(new Point3D(x, y, z), 0);
-
             var found = false;
-            foreach (var item in eable)
+            foreach (var morphItem in Map.Felucca.GetItemsAt<MorphItem>(x, y))
             {
-                if (item is MorphItem morphItem && morphItem.Z == z && morphItem.InactiveItemId == inactiveItemID && morphItem.ActiveItemId == activeItemID)
+                if (morphItem.Z == z && morphItem.InactiveItemId == inactiveItemID && morphItem.ActiveItemId == activeItemID)
                 {
                     found = true;
                     break;
                 }
             }
 
-            eable.Free();
             return found;
         }
 
         public static bool FindEffectController(int x, int y, int z)
         {
-            var eable = Map.Felucca.GetItemsInRange(new Point3D(x, y, z), 0);
-
             var found = false;
-            foreach (var item in eable)
+            foreach (var item in Map.Felucca.GetItemsAt<EffectController>(x, y))
             {
-                if (item is EffectController && item.Z == z)
+                if (item.Z == z)
                 {
                     found = true;
                     break;
                 }
             }
 
-            eable.Free();
             return found;
         }
 
         public static T TryCreateItem<T>(int x, int y, int z, T srcItem) where T : Item
         {
-            var eable = Map.Felucca.GetItemsInBounds<T>(new Rectangle2D(x, y, 1, 1));
-            var t = eable.FirstOrDefault(item => item.GetType() == srcItem.GetType());
-            eable.Free();
-            if (t != null)
+            foreach (var item in Map.Felucca.GetItemsAt<T>(x, y))
             {
                 srcItem.Delete();
-                return t;
+                return item;
             }
 
             srcItem.MoveToWorld(new Point3D(x, y, z), Map.Felucca);
             m_Count++;
-
             return srcItem;
         }
 
@@ -124,6 +113,8 @@ namespace Server.Commands
             m_Count++;
         }
 
+        [Usage("GenKhaldun")]
+        [Description("Generates Khaldun Puzzles")]
         public static void GenKhaldun_OnCommand(CommandEventArgs e)
         {
             m_Count = 0;

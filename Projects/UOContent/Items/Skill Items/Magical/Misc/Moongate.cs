@@ -99,7 +99,8 @@ public partial class Moongate : Item
         else if (m.Kills >= 5 && TargetMap != Map.Felucca ||
                  TargetMap == Map.Tokuno && (flags & ClientFlags.Tokuno) == 0 ||
                  TargetMap == Map.Malas && (flags & ClientFlags.Malas) == 0 ||
-                 TargetMap == Map.Ilshenar && (flags & ClientFlags.Ilshenar) == 0)
+                 TargetMap == Map.Ilshenar && (flags & ClientFlags.Ilshenar) == 0 ||
+                 TargetMap == Map.TerMur && (flags & ClientFlags.TerMur) == 0)
         {
             m.SendLocalizedMessage(1019004); // You are not allowed to travel there.
         }
@@ -156,7 +157,6 @@ public partial class Moongate : Item
                 from.SendSound(0x20E, from);
             }
 
-            from.CloseGump<MoongateConfirmGump>();
             from.SendGump(new MoongateConfirmGump(from, this));
         }
         else
@@ -264,7 +264,6 @@ public partial class ConfirmationMoongate : Moongate
     {
         if (GumpWidth > 0 && GumpHeight > 0 && TitleNumber > 0 && Message?.IsEmpty == false)
         {
-            from.CloseGump<WarningGump>();
             from.SendGump(
                 new WarningGump(
                     TitleNumber,
@@ -274,7 +273,8 @@ public partial class ConfirmationMoongate : Moongate
                     GumpWidth,
                     GumpHeight,
                     okay => Warning_Callback(from, okay)
-                )
+                ),
+                true
             );
         }
         else
@@ -305,6 +305,8 @@ public class MoongateConfirmGump : Gump
 {
     private Mobile _from;
     private Moongate _gate;
+
+    public override bool Singleton => true;
 
     public MoongateConfirmGump(Mobile from, Moongate gate) : base(Core.AOS ? 110 : 20, Core.AOS ? 100 : 30)
     {
@@ -386,7 +388,7 @@ public class MoongateConfirmGump : Gump
         }
     }
 
-    public override void OnResponse(NetState state, RelayInfo info)
+    public override void OnResponse(NetState state, in RelayInfo info)
     {
         if (info.ButtonID == 1)
         {

@@ -102,30 +102,30 @@ namespace Server.Mobiles
         {
             var map = target.Map;
 
-            if (map == null)
+            if (map == null || map == Map.Internal)
             {
                 return;
             }
 
-            var eable = GetMobilesInRange<OrcishLord>(10);
             var count = 0;
-            foreach (var m in eable)
+            foreach (var m in GetMobilesInRange<OrcishLord>(10))
             {
                 if (++count == 10)
                 {
-                    break;
+                    return;
                 }
             }
 
-            if (count < 10)
+            var location = map.GetRandomNearbyLocation(target.Location);
+            var orc = new SpawnedOrcishLord
             {
-                BaseCreature orc = new SpawnedOrcishLord { Team = Team };
+                Team = Team,
+                Home = location,
+                RangeHome = 10,
+                Combatant = target
+            };
 
-                orc.MoveToWorld(map.GetRandomNearbyLocation(target.Location), map);
-                orc.Combatant = target;
-            }
-
-            eable.Free();
+            orc.MoveToWorld(location, map);
         }
     }
 }

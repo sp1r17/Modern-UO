@@ -38,7 +38,7 @@ namespace Server.Engines.BulkOrders
             AddHtmlLocalized(152, 130, 100, 24, 1011036); // OKAY
         }
 
-        public override void OnResponse(NetState sender, RelayInfo info)
+        public override void OnResponse(NetState sender, in RelayInfo info)
         {
             if (info.ButtonID != 2)
             {
@@ -103,7 +103,7 @@ namespace Server.Engines.BulkOrders
             {
                 if (pack.ConsumeTotal(typeof(Gold), price) || Banker.Withdraw(m_From, price))
                 {
-                    m_Book.Entries.Remove(m_Entry);
+                    m_Book.RemoveEntry(m_Entry);
                     m_Book.InvalidateProperties();
                     pv.HoldGold += price;
                     m_From.AddToBackpack(item);

@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using Server.Accounting;
 using Server.Collections;
 using Server.ContextMenus;
@@ -11,7 +10,6 @@ using Server.Items;
 using Server.Misc;
 using Server.Mobiles;
 using Server.Multis.Deeds;
-using Server.Network;
 using Server.Regions;
 using Server.Targeting;
 
@@ -19,9 +17,9 @@ namespace Server.Multis
 {
     public abstract class BaseHouse : BaseMulti
     {
-        public const int MaxCoOwners = 15;
+        public static bool DecayEnabled { get; set; }
 
-        public const bool DecayEnabled = true;
+        public const int MaxCoOwners = 15;
 
         public const int MaximumBarkeepCount = 2;
 
@@ -69,7 +67,7 @@ namespace Server.Multis
 
             m_RelativeBanLocation = BaseBanLocation;
 
-            UpdateRegion();
+            // UpdateRegion();
 
             if (owner != null)
             {
@@ -89,8 +87,8 @@ namespace Server.Multis
             AllHouses.Add(this);
         }
 
-        public static bool NewVendorSystem // Is new player vendor system enabled?
-            => Core.AOS;
+        // Is new player vendor system enabled?
+        public static bool NewVendorSystem => Core.AOS;
 
         public static int MaxFriends => !Core.AOS ? 50 : 140;
         public static int MaxBans => !Core.AOS ? 50 : 140;
@@ -314,14 +312,18 @@ namespace Server.Multis
             get => m_Owner;
             set
             {
+                if (m_Owner == value)
+                {
+                    return;
+                }
+
                 if (m_Owner != null)
                 {
-                    if (!m_Table.TryGetValue(m_Owner, out var list))
+                    if (m_Table.TryGetValue(m_Owner, out var list) && list.Remove(this) && list.Count == 0)
                     {
-                        m_Table[m_Owner] = list = new List<BaseHouse>();
+                        m_Table.Remove(m_Owner);
                     }
 
-                    list.Remove(this);
                     m_Owner.Delta(MobileDelta.Noto);
                 }
 
@@ -602,12 +604,18 @@ namespace Server.Multis
 
         public virtual void KillVendors()
         {
-            foreach (var vendor in PlayerVendors.ToList())
+            using var list = PooledRefList<Mobile>.Create();
+            list.AddRange(PlayerVendors);
+
+            foreach (var vendor in list)
             {
-                vendor.Destroy(true);
+                ((PlayerVendor)vendor).Destroy(true);
             }
 
-            foreach (var barkeeper in PlayerBarkeepers.ToList())
+            list.Clear();
+            list.AddRange(PlayerBarkeepers);
+
+            foreach (var barkeeper in list)
             {
                 barkeeper.Delete();
             }
@@ -708,7 +716,9 @@ namespace Server.Multis
             return fromSecures + fromVendors + fromLockdowns + fromMovingCrate;
         }
 
-        public bool InRange(Point2D from, int range)
+        public override bool InRange(Point3D from, int range) => InRange(new Point2D(from), range);
+
+        public override bool InRange(Point2D from, int range)
         {
             if (Region == null)
             {
@@ -717,7 +727,6 @@ namespace Server.Multis
 
             foreach (var rect in Region.Area)
             {
-                // TODO: Convert this to 3D - https://github.com/modernuo/ModernUO/issues/29
                 if (from.X >= rect.Start.X - range && from.Y >= rect.Start.Y - range && from.X < rect.End.X + range && from.Y < rect.End.Y + range)
                 {
                     return true;
@@ -751,31 +760,47 @@ namespace Server.Multis
             vendor = false;
             rentalContract = false;
 
-            var eable = map.GetObjectsInRange(location, 0);
-
-            foreach (var entity in eable)
+            foreach (var m in map.GetMobilesAt(location))
             {
-                if ((location.Z - entity.Z).Abs() <= 16)
+                if ((location.Z - m.Z).Abs() <= 16 && m is PlayerVendor or PlayerBarkeeper)
                 {
-                    if (entity is PlayerVendor or PlayerBarkeeper or PlayerVendorPlaceholder)
-                    {
-                        vendor = true;
-                        break;
-                    }
-
-                    if (entity is VendorRentalContract)
-                    {
-                        rentalContract = true;
-                        break;
-                    }
+                    vendor = true;
+                    return;
                 }
             }
 
-            eable.Free();
+            foreach (var item in map.GetItemsAt(location))
+            {
+                if ((location.Z - item.Z).Abs() <= 16)
+                {
+                    if (item is PlayerVendorPlaceholder)
+                    {
+                        vendor = true;
+                        return;
+                    }
+
+                    if (item is VendorRentalContract)
+                    {
+                        rentalContract = true;
+                        return;
+                    }
+                }
+            }
         }
 
-        public List<Mobile> AvailableVendorsFor(Mobile m) =>
-            PlayerVendors.Where(vendor => vendor.CanInteractWith(m, false)).ToList<Mobile>();
+        public List<Mobile> AvailableVendorsFor(Mobile m)
+        {
+            List<Mobile> list = new List<Mobile>();
+            foreach (PlayerVendor vendor in PlayerVendors)
+            {
+                if (vendor.CanInteractWith(m, false))
+                {
+                    list.Add(vendor);
+                }
+            }
+
+            return list;
+        }
 
         public bool AreThereAvailableVendorsFor(Mobile m)
         {
@@ -935,9 +960,9 @@ namespace Server.Multis
             }
         }
 
-        public List<IEntity> GetHouseEntities()
+        public PooledRefList<IEntity> GetHouseEntities()
         {
-            var list = new List<IEntity>();
+            var list = PooledRefList<IEntity>.Create(256);
 
             MovingCrate?.Hide();
 
@@ -946,13 +971,45 @@ namespace Server.Multis
                 list.Add(m_Trash);
             }
 
-            list.AddRange(LockDowns.Where(item => item.Parent == null && item.Map != Map.Internal));
-            list.AddRange(VendorRentalContracts.Where(item => item.Parent == null && item.Map != Map.Internal));
-            list.AddRange(Secures.Select(info => info.Item).Where(item => item.Parent == null && item.Map != Map.Internal));
-            list.AddRange(Addons.Where(item => item.Parent == null && item.Map != Map.Internal));
-
-            foreach (var mobile in PlayerVendors)
+            for (var i = 0; i < LockDowns.Count; i++)
             {
+                var item = LockDowns[i];
+                if (item.Parent == null && item.Map != Map.Internal)
+                {
+                    list.Add(item);
+                }
+            }
+
+            for (var i = 0; i < VendorRentalContracts.Count; i++)
+            {
+                var item = VendorRentalContracts[i];
+                if (item.Parent == null && item.Map != Map.Internal)
+                {
+                    list.Add(item);
+                }
+            }
+
+            for (var i = 0; i < Secures.Count; i++)
+            {
+                var item = Secures[i].Item;
+                if (item.Parent == null && item.Map != Map.Internal)
+                {
+                    list.Add(item);
+                }
+            }
+
+            for (var i = 0; i < Addons.Count; i++)
+            {
+                var item = Addons[i];
+                if (item.Parent == null && item.Map != Map.Internal)
+                {
+                    list.Add(item);
+                }
+            }
+
+            for (var i = 0; i < PlayerVendors.Count; i++)
+            {
+                var mobile = PlayerVendors[i];
                 mobile.Return();
 
                 if (mobile.Map != Map.Internal)
@@ -961,7 +1018,15 @@ namespace Server.Multis
                 }
             }
 
-            list.AddRange(PlayerBarkeepers.Where(mobile => mobile.Map != Map.Internal));
+            for (var i = 0; i < PlayerBarkeepers.Count; i++)
+            {
+                var mobile = PlayerBarkeepers[i];
+
+                if (mobile.Map != Map.Internal)
+                {
+                    list.Add(mobile);
+                }
+            }
 
             return list;
         }
@@ -1054,8 +1119,8 @@ namespace Server.Multis
                                 var retainDeedHue = false; // if the items aren't hued but the deed itself is
                                 var hue = 0;
 
-                                if (item is BaseAddon ba && ba.RetainDeedHue
-                                ) // There are things that are IAddon which aren't BaseAddon
+                                // There are things that are IAddon which aren't BaseAddon
+                                if (item is BaseAddon ba && ba.RetainDeedHue)
                                 {
                                     retainDeedHue = true;
 
@@ -1143,6 +1208,7 @@ namespace Server.Multis
             MovingCrate.DropItem(item);
         }
 
+        // TODO: Convert to a ref struct enumerator
         public List<Item> GetItems()
         {
             if (Map == null || Map == Map.Internal)
@@ -1154,10 +1220,14 @@ namespace Server.Multis
             var end = new Point2D(X + Components.Max.X + 1, Y + Components.Max.Y + 1);
             var rect = new Rectangle2D(start, end);
 
-            var eable = Map.GetItemsInBounds(rect);
-            var list = eable.Where(item => item.Movable && IsInside(item)).ToList();
-
-            eable.Free();
+            var list = new List<Item>();
+            foreach (var item in Map.GetItemsInBounds(rect))
+            {
+                if (item.Movable && IsInside(item))
+                {
+                    list.Add(item);
+                }
+            }
 
             return list;
         }
@@ -1195,6 +1265,7 @@ namespace Server.Multis
 
         public static void Configure()
         {
+            DecayEnabled = ServerConfiguration.GetOrUpdateSetting("houseDecay.enable", true);
             LockedDownFlag = 1;
             SecureFlag = 2;
         }
@@ -1332,11 +1403,9 @@ namespace Server.Multis
                 return null;
             }
 
-            var sector = map.GetSector(loc);
-
-            for (var i = 0; i < sector.Multis.Count; ++i)
+            foreach (var house in map.GetMultisInSector<BaseHouse>(loc))
             {
-                if (sector.Multis[i] is BaseHouse house && house.IsInside(loc, height))
+                if (house.IsInside(loc, height))
                 {
                     return house;
                 }
@@ -1401,47 +1470,9 @@ namespace Server.Multis
                 return IsFriend(from);
             }
 
-            if (item is Dices)
-            {
-                return true;
-            }
-
-            if (item is RecallRune)
-            {
-                return true;
-            }
-
-            if (item is TreasureMap)
-            {
-                return true;
-            }
-
-            if (item is Clock)
-            {
-                return true;
-            }
-
-            if (item is BaseInstrument)
-            {
-                return true;
-            }
-
-            if (item is Dyes)
-            {
-                return true;
-            }
-
-            if (item is VendorRentalContract)
-            {
-                return true;
-            }
-
-            if (item is RewardBrazier)
-            {
-                return true;
-            }
-
-            return false;
+            return item is
+                Dices or RecallRune or TreasureMap or Clock or
+                BaseInstrument or Dyes or VendorRentalContract or RewardBrazier;
         }
 
         public virtual bool IsInside(Point3D p, int height)
@@ -1453,8 +1484,8 @@ namespace Server.Multis
 
             var mcl = Components;
 
-            var x = p.X - (X + mcl.Min.X);
-            var y = p.Y - (Y + mcl.Min.Y);
+            var x = p.X - X - mcl.Min.X;
+            var y = p.Y - Y - mcl.Min.Y;
 
             if (x < 0 || x >= mcl.Width || y < 0 || y >= mcl.Height)
             {
@@ -1466,6 +1497,7 @@ namespace Server.Multis
                 return true;
             }
 
+            // TODO: Use ref struct
             var tiles = mcl.Tiles[x][y];
 
             for (var j = 0; j < tiles.Length; ++j)
@@ -2172,9 +2204,8 @@ namespace Server.Multis
 
             if (!isValid)
             {
-                from.SendLocalizedMessage(
-                    1062067
-                ); // In order to transfer the house, you and the recipient must both be outside the building and within two paces of the house sign.
+                // In order to transfer the house, you and the recipient must both be outside the building and within two paces of the house sign.
+                from.SendLocalizedMessage(1062067);
             }
 
             return isValid;
@@ -2189,141 +2220,124 @@ namespace Server.Multis
 
             if (NewVendorSystem && HasPersonalVendors)
             {
-                from.SendLocalizedMessage(
-                    1062467
-                ); // You cannot trade this house while you still have personal vendors inside.
+                // You cannot trade this house while you still have personal vendors inside.
+                from.SendLocalizedMessage(1062467);
             }
             else if (DecayLevel == DecayLevel.DemolitionPending)
             {
-                from.SendLocalizedMessage(
-                    1005321
-                ); // This house has been marked for demolition, and it cannot be transferred.
+                // This house has been marked for demolition, and it cannot be transferred.
+                from.SendLocalizedMessage(1005321);
             }
             else if (from == to)
             {
                 from.SendLocalizedMessage(1005330); // You cannot transfer a house to yourself, silly.
             }
-            else if (to.Player)
+            else if (HasAccountHouse(to))
             {
-                if (HasAccountHouse(to))
-                {
-                    from.SendLocalizedMessage(501388); // You cannot transfer ownership to another house owner or co-owner!
-                }
-                else if (CheckTransferPosition(from, to))
-                {
-                    from.SendLocalizedMessage(1005326); // Please wait while the other player verifies the transfer.
-
-                    if (HasRentedVendors)
-                    {
-                        /* You are about to be traded a home that has active vendor contracts.
-                         * While there are active vendor contracts in this house, you
-                         * <strong>cannot</strong> demolish <strong>OR</strong> customize the home.
-                         * When you accept this house, you also accept landlordship for every
-                         * contract vendor in the house.
-                         */
-                        to.SendGump(
-                            new WarningGump(
-                                1060635,
-                                30720,
-                                1062487,
-                                32512,
-                                420,
-                                280,
-                                okay => ConfirmTransfer_Callback(to, okay, from)
-                            )
-                        );
-                    }
-                    else
-                    {
-                        to.CloseGump<HouseTransferGump>();
-                        to.SendGump(new HouseTransferGump(from, to, this));
-                    }
-                }
+                from.SendLocalizedMessage(501388); // You cannot transfer ownership to another house owner or co-owner!
             }
-            else
+            else if (CheckTransferPosition(from, to))
             {
-                from.SendLocalizedMessage(501384); // Only a player can own a house!
+                from.SendLocalizedMessage(1005326); // Please wait while the other player verifies the transfer.
+
+                if (HasRentedVendors)
+                {
+                    to.SendGump(
+                        new TradeHouseWarningGump(okay => ConfirmTransfer_Callback(to, okay, from))
+                    );
+                }
+                else
+                {
+                    to.SendGump(new AcceptHouseTransferGump(from, this));
+                }
             }
         }
 
-        private void ConfirmTransfer_Callback(Mobile to, bool ok, Mobile from)
+        private class TradeHouseWarningGump : StaticWarningGump<TradeHouseWarningGump>
         {
-            if (!ok || Deleted || !from.CheckAlive() || !IsOwner(from))
+            /*
+             * You are about to be traded a home that has active vendor contracts.
+             * While there are active vendor contracts in this house, you
+             * <strong>cannot</strong> demolish <strong>OR</strong> customize the home.
+             * When you accept this house, you also accept landlordship for every contract vendor in the house.
+             */
+            public override int StaticLocalizedContent => 1062487;
+
+            public override int Width => 420;
+            public override int Height => 280;
+
+            public TradeHouseWarningGump(Action<bool> callback) : base(callback)
+            {
+            }
+        }
+
+        private void ConfirmTransfer_Callback(Mobile transferee, bool ok, Mobile transferor)
+        {
+            if (!ok || Deleted || !transferor.CheckAlive() || !IsOwner(transferor))
             {
                 return;
             }
 
-            if (CheckTransferPosition(from, to))
+            if (CheckTransferPosition(transferor, transferee))
             {
-                to.CloseGump<HouseTransferGump>();
-                to.SendGump(new HouseTransferGump(from, to, this));
+                transferee.SendGump(new AcceptHouseTransferGump(transferor, this));
             }
         }
 
-        public void EndConfirmTransfer(Mobile from, Mobile to)
+        public void EndConfirmTransfer(Mobile transferor, Mobile transferee)
         {
-            if (Deleted || !from.CheckAlive() || !IsOwner(from))
+            if (Deleted || !transferor.CheckAlive() || !IsOwner(transferor))
             {
                 return;
             }
 
             if (NewVendorSystem && HasPersonalVendors)
             {
-                from.SendLocalizedMessage(
-                    1062467
-                ); // You cannot trade this house while you still have personal vendors inside.
+                // You cannot trade this house while you still have personal vendors inside.
+                transferor.SendLocalizedMessage(1062467);
             }
             else if (DecayLevel == DecayLevel.DemolitionPending)
             {
-                from.SendLocalizedMessage(
-                    1005321
-                ); // This house has been marked for demolition, and it cannot be transferred.
+                // This house has been marked for demolition, and it cannot be transferred.
+                transferor.SendLocalizedMessage(1005321);
             }
-            else if (from == to)
+            else if (transferor == transferee)
             {
-                from.SendLocalizedMessage(1005330); // You cannot transfer a house to yourself, silly.
+                transferor.SendLocalizedMessage(1005330); // You cannot transfer a house to yourself, silly.
             }
-            else if (to.Player)
+            else if (HasAccountHouse(transferee))
             {
-                if (HasAccountHouse(to))
-                {
-                    from.SendLocalizedMessage(501388); // You cannot transfer ownership to another house owner or co-owner!
-                }
-                else if (CheckTransferPosition(from, to))
-                {
-                    NetState fromState = from.NetState, toState = to.NetState;
+                transferor.SendLocalizedMessage(501388); // You cannot transfer ownership to another house owner or co-owner!
+            }
+            else if (CheckTransferPosition(transferor, transferee))
+            {
+                var fromState = transferor.NetState;
+                var toState = transferee.NetState;
 
-                    if (fromState != null && toState != null)
+                if (fromState != null && toState != null)
+                {
+                    if (transferor.HasTrade)
                     {
-                        if (from.HasTrade)
-                        {
-                            from.SendLocalizedMessage(
-                                1062071
-                            ); // You cannot trade a house while you have other trades pending.
-                        }
-                        else if (to.HasTrade)
-                        {
-                            to.SendLocalizedMessage(
-                                1062071
-                            ); // You cannot trade a house while you have other trades pending.
-                        }
-                        else if (!to.Alive)
-                        {
-                            // TODO: Check if the message is correct.
-                            from.SendLocalizedMessage(1062069); // You cannot transfer this house to that person.
-                        }
-                        else
-                        {
-                            Container c = fromState.AddTrade(toState);
+                        // You cannot trade a house while you have other trades pending.
+                        transferor.SendLocalizedMessage(1062071);
+                    }
+                    else if (transferee.HasTrade)
+                    {
+                        // You cannot trade a house while you have other trades pending.
+                        transferee.SendLocalizedMessage(1062071);
+                    }
+                    else if (!transferee.Alive)
+                    {
+                        // TODO: Check if the message is correct.
+                        transferor.SendLocalizedMessage(1062069); // You cannot transfer this house to that person.
+                    }
+                    else
+                    {
+                        Container c = fromState.AddTrade(toState);
 
-                            c.DropItem(new TransferItem(this));
-                        }
+                        c.DropItem(new TransferItem(this));
                     }
                 }
-            }
-            else
-            {
-                from.SendLocalizedMessage(501384); // Only a player can own a house!
             }
         }
 
@@ -2385,8 +2399,7 @@ namespace Server.Multis
 
                 if (info != null)
                 {
-                    m.CloseGump<SetSecureLevelGump>();
-                    m.SendGump(new SetSecureLevelGump(m_Owner, info, this));
+                    m.SendGump(new SetSecureLevelGump(info, this));
                 }
                 else if (item.Parent != null)
                 {
@@ -2421,8 +2434,7 @@ namespace Server.Multis
                     LockDowns.Remove(item);
                     item.Movable = false;
 
-                    m.CloseGump<SetSecureLevelGump>();
-                    m.SendGump(new SetSecureLevelGump(m_Owner, info, this));
+                    m.SendGump(new SetSecureLevelGump(info, this));
                 }
             }
         }
@@ -2672,9 +2684,8 @@ namespace Server.Multis
             }
             else if (!Public && IsAosRules)
             {
-                from.SendLocalizedMessage(
-                    1062521
-                ); // You cannot ban someone from a private house.  Revoke their access instead.
+                // You cannot ban someone from a private house.  Revoke their access instead.
+                from.SendLocalizedMessage(1062521);
             }
             else if (targ is BaseCreature bc && bc.NoHouseRestrictions)
             {
@@ -3325,14 +3336,9 @@ namespace Server.Multis
         {
             base.OnAfterDelete();
 
-            if (m_Owner != null)
+            if (m_Owner != null && m_Table.TryGetValue(m_Owner, out var list) && list.Remove(this) && list.Count == 0)
             {
-                if (!m_Table.TryGetValue(m_Owner, out var list))
-                {
-                    m_Table[m_Owner] = list = new List<BaseHouse>();
-                }
-
-                list.Remove(this);
+                m_Table.Remove(m_Owner);
             }
 
             if (m_Region != null)
@@ -3429,8 +3435,8 @@ namespace Server.Multis
                             var retainDeedHue = false; // if the items aren't hued but the deed itself is
                             var hue = 0;
 
-                            if (addon is BaseAddon ba && ba.RetainDeedHue
-                            ) // There are things that are IAddon which aren't BaseAddon
+                            // There are things that are IAddon which aren't BaseAddon
+                            if (addon is BaseAddon ba && ba.RetainDeedHue)
                             {
                                 retainDeedHue = true;
 
@@ -3463,9 +3469,14 @@ namespace Server.Multis
                 Addons.Clear();
             }
 
-            foreach (var inventory in VendorInventories.ToList())
+            if (VendorInventories.Count > 0)
             {
-                inventory.Delete();
+                using var inventories = PooledRefList<VendorInventory>.Create(VendorInventories.Count);
+                inventories.AddRange(VendorInventories);
+                foreach (var inventory in inventories)
+                {
+                    inventory.Delete();
+                }
             }
 
             MovingCrate?.Delete();
@@ -3657,12 +3668,14 @@ namespace Server.Multis
             }
 
             var mcl = Components;
-            var eable =
-                map.GetItemsInBounds<Guildstone>(new Rectangle2D(X + mcl.Min.X, Y + mcl.Min.Y, mcl.Width, mcl.Height));
+            var bounds = new Rectangle2D(X + mcl.Min.X, Y + mcl.Min.Y, mcl.Width, mcl.Height);
 
-            var item = eable.FirstOrDefault(Contains);
-            eable.Free();
-            return item;
+            foreach (var gs in map.GetItemsInBounds<Guildstone>(bounds))
+            {
+                return gs;
+            }
+
+            return null;
         }
 
         public void ResetDynamicDecay()
@@ -3724,7 +3737,7 @@ namespace Server.Multis
                     ref ySouth
                 );
 
-                list.Add(1061112, Utility.FixHtml(houseName)); // House Name: ~1_val~
+                list.Add(1061112, houseName.FixHtml()); // House Name: ~1_val~
                 list.Add(1061113, owner);                      // Owner: ~1_val~
                 if (valid)
                 {
@@ -3750,7 +3763,7 @@ namespace Server.Multis
 
                 var version = reader.ReadInt();
 
-                Delete();
+                Timer.DelayCall(Delete);
             }
 
             public override bool AllowSecureTrade(Mobile from, Mobile to, Mobile newOwner, bool accepted)
@@ -3975,11 +3988,8 @@ namespace Server.Multis
                 {
                     if (item is VendorRentalContract)
                     {
-                        from.LocalOverheadMessage(
-                            MessageType.Regular,
-                            0x3B2,
-                            1062392
-                        ); // You must double click the contract in your pack to lock it down.
+                        // You must double click the contract in your pack to lock it down.
+                        from.LocalOverheadMessage(MessageType.Regular, 0x3B2, 1062392);
                         from.LocalOverheadMessage(MessageType.Regular, 0x3B2, 501732); // I cannot lock this down!
                     }
                     else if (item is AddonComponent)
@@ -4058,11 +4068,8 @@ namespace Server.Multis
                 {
                     if (item is VendorRentalContract)
                     {
-                        from.LocalOverheadMessage(
-                            MessageType.Regular,
-                            0x3B2,
-                            1062392
-                        ); // You must double click the contract in your pack to lock it down.
+                        // You must double click the contract in your pack to lock it down.
+                        from.LocalOverheadMessage(MessageType.Regular, 0x3B2, 1062392);
                         from.LocalOverheadMessage(MessageType.Regular, 0x3B2, 501732); // I cannot lock this down!
                     }
                     else
@@ -4273,7 +4280,7 @@ namespace Server.Multis
 
         protected override void OnTarget(Mobile from, object targeted)
         {
-            if (targeted is Mobile mobile)
+            if (targeted is Mobile { Player: true } mobile)
             {
                 m_House.BeginConfirmTransfer(from, mobile);
             }
@@ -4286,13 +4293,8 @@ namespace Server.Multis
 
     public class SetSecureLevelEntry : ContextMenuEntry
     {
-        private readonly Item m_Item;
-        private ISecurable m_Securable;
-
-        public SetSecureLevelEntry(Item item, ISecurable securable) : base(6203, 6)
+        public SetSecureLevelEntry() : base(6203, 6)
         {
-            m_Item = item;
-            m_Securable = securable;
         }
 
         public static ISecurable GetSecurable(Mobile from, Item item)
@@ -4303,8 +4305,6 @@ namespace Server.Multis
             {
                 return null;
             }
-
-            ISecurable sec = null;
 
             if (item is ISecurable securable)
             {
@@ -4322,45 +4322,49 @@ namespace Server.Multis
 
                 if (isOwned)
                 {
-                    sec = securable;
+                    return securable;
                 }
             }
             else
             {
                 var list = house.Secures;
 
-                for (var i = 0; sec == null && i < list?.Count; ++i)
+                for (var i = 0; i < list?.Count; ++i)
                 {
                     var si = list[i];
 
                     if (si.Item == item)
                     {
-                        sec = si;
+                        return si;
                     }
                 }
             }
 
-            return sec;
+            return null;
         }
 
-        public static void AddTo(Mobile from, Item item, List<ContextMenuEntry> list)
+        public static void AddTo(Mobile from, Item item, ref PooledRefList<ContextMenuEntry> list)
         {
             var sec = GetSecurable(from, item);
 
             if (sec != null)
             {
-                list.Add(new SetSecureLevelEntry(item, sec));
+                list.Add(new SetSecureLevelEntry());
             }
         }
 
-        public override void OnClick()
+        public override void OnClick(Mobile from, IEntity target)
         {
-            var sec = GetSecurable(Owner.From, m_Item);
+            if (target is not Item item)
+            {
+                return;
+            }
+
+            var sec = GetSecurable(from, item);
 
             if (sec != null)
             {
-                Owner.From.CloseGump<SetSecureLevelGump>();
-                Owner.From.SendGump(new SetSecureLevelGump(Owner.From, sec, BaseHouse.FindHouseAt(m_Item)));
+                from.SendGump(new SetSecureLevelGump(sec, BaseHouse.FindHouseAt(item)));
             }
         }
     }

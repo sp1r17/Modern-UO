@@ -1,6 +1,6 @@
 /*************************************************************************
  * ModernUO                                                              *
- * Copyright 2019-2023 - ModernUO Development Team                       *
+ * Copyright 2019-2024 - ModernUO Development Team                       *
  * Email: hi@modernuo.com                                                *
  * File: Persistence.cs                                                  *
  *                                                                       *
@@ -14,44 +14,36 @@
  *************************************************************************/
 
 using System;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
-using System.Threading.Tasks;
+using System.IO.MemoryMappedFiles;
 
 namespace Server;
 
-public static class Persistence
+public abstract class Persistence
 {
-    public const int DefaultPriority = 100;
+    private static readonly SortedSet<Persistence> _registry = new(new PersistenceComparer());
 
-    private static readonly SortedSet<RegistryEntry> _registry = new(new RegistryEntryComparer());
+    public int Priority { get; }
 
-    public static void Register(
-        string name,
-        Action serializer,
-        Action<string> snapshotWriter,
-        Action<string, Dictionary<ulong, string>> deserializer,
-        int priority = DefaultPriority
-    )
+    public Persistence(int priority = 100)
     {
-        _registry.Add(
-            new RegistryEntry
-            {
-                Name = name,
-                Priority = priority,
-                Serialize = serializer,
-                WriteSnapshot = snapshotWriter,
-                Deserialize = deserializer
-            }
-        );
+        Priority = priority;
+        _registry.Add(this);
     }
 
-    public static void Unregister(string name) => _registry.RemoveWhere(entry => entry.Name == name);
+    public bool Register() => _registry.Add(this);
+
+    public void Unregister() => _registry.Remove(this);
 
     public static void Load(string path)
     {
         var typesDb = LoadTypes(path);
+
+        foreach (var entry in _registry)
+        {
+            (entry as IGenericEntityPersistence)?.DeserializeIndexes(path, typesDb);
+        }
 
         // This should probably not be parallel since Mobiles must be loaded before Items
         foreach (var entry in _registry)
@@ -60,86 +52,107 @@ public static class Persistence
         }
     }
 
-    private static Dictionary<ulong, string> LoadTypes(string path)
+    private static unsafe Dictionary<ulong, string> LoadTypes(string path)
     {
         var db = new Dictionary<ulong, string>();
 
-        string tdbPath = Path.Combine(path, "SerializedTypes.db");
-        if (!File.Exists(tdbPath))
+        string typesPath = Path.Combine(path, "SerializedTypes.db");
+        if (!File.Exists(typesPath))
         {
             return db;
         }
 
-        using FileStream tdb = new FileStream(tdbPath, FileMode.Open, FileAccess.Read, FileShare.Read);
-        BinaryReader tdbReader = new BinaryReader(tdb);
+        using var mmf = MemoryMappedFile.CreateFromFile(typesPath, FileMode.Open);
+        using var accessor = mmf.CreateViewStream();
 
-        var version = tdbReader.ReadInt32();
-        var count = tdbReader.ReadInt32();
+        byte* ptr = null;
+        accessor.SafeMemoryMappedViewHandle.AcquirePointer(ref ptr);
+        var dataReader = new UnmanagedDataReader(ptr, accessor.Length);
+
+        var version = dataReader.ReadInt();
+        var count = dataReader.ReadInt();
 
         for (var i = 0; i < count; ++i)
         {
-            var hash = tdbReader.ReadUInt64();
-            var typeName = tdbReader.ReadString();
+            var hash = dataReader.ReadULong();
+            var typeName = dataReader.ReadStringRaw();
             db[hash] = typeName;
         }
 
+        accessor.SafeMemoryMappedViewHandle.ReleasePointer();
         return db;
     }
 
-    public static void Serialize()
+    // Note: This is strictly on a background thread
+    internal static void WriteSnapshotAll(string path, HashSet<Type> typeSet)
     {
-        Parallel.ForEach(_registry, entry => entry.Serialize());
-    }
-
-    public static void WriteSnapshot(string path, ConcurrentQueue<Type> types)
-    {
-        foreach (var entry in _registry)
+        foreach (var p in _registry)
         {
-            entry.WriteSnapshot(path);
+            p.WriteSnapshot(path, typeSet);
         }
 
-        // Dedupe the queue.
-        foreach (var type in types)
-        {
-            _typesSet.Add(type);
-        }
-
-        WriteSerializedTypesSnapshot(path, _typesSet);
-        _typesSet.Clear();
+        WriteSerializedTypesSnapshot(path, typeSet);
     }
-
-    private static HashSet<Type> _typesSet = new();
 
     public static void WriteSerializedTypesSnapshot(string path, HashSet<Type> types)
     {
-        string tdbPath = Path.Combine(path, "SerializedTypes.db");
-        using var tdb = new BinaryFileWriter(tdbPath, false);
+        string typesPath = Path.Combine(path, "SerializedTypes.db");
+        using var fs = new FileStream(typesPath, FileMode.Create);
+        using var writer = new MemoryMapFileWriter(fs, 1024 * 1024 * 4);
 
-        tdb.Write(0); // version
-        tdb.Write(types.Count);
+        writer.Write(0); // version
+        writer.Write(types.Count);
 
         foreach (var type in types)
         {
             var fullName = type.FullName;
-            tdb.Write(HashUtility.ComputeHash64(fullName));
-            tdb.Write(fullName);
+            writer.Write(HashUtility.ComputeHash64(fullName));
+            writer.WriteStringRaw(fullName);
         }
     }
 
-    public record RegistryEntry
+    internal static void SerializeAll()
     {
-        public string Name { get; init; }
-        public int Priority { get; init; }
-
-        // Serializes to memory buffers and run in parallel
-        public Action Serialize { get; init; }
-        public Action<string> WriteSnapshot { get; init; }
-        public Action<string, Dictionary<ulong, string>> Deserialize { get; init; }
+        foreach (var p in _registry)
+        {
+            p.Serialize();
+        }
     }
 
-    internal class RegistryEntryComparer : IComparer<RegistryEntry>
+    internal static void PostWorldSaveAll()
     {
-        public int Compare(RegistryEntry x, RegistryEntry y)
+        foreach (var p in _registry)
+        {
+            p.PostWorldSave();
+        }
+    }
+
+    internal static void PostDeserializeAll()
+    {
+        foreach (var p in _registry)
+        {
+            p.PostDeserialize();
+        }
+    }
+
+    // Note: This should only be run on a background thread
+    public abstract void WriteSnapshot(string savePath, HashSet<Type> typeSet);
+
+    public abstract void Serialize();
+
+    public abstract void Deserialize(string savePath, Dictionary<ulong, string> typesDb);
+
+    public virtual void PostWorldSave()
+    {
+    }
+
+    public virtual void PostDeserialize()
+    {
+    }
+
+    internal class PersistenceComparer : IComparer<Persistence>
+    {
+        public int Compare(Persistence x, Persistence y)
         {
             if (x == y)
             {
@@ -160,7 +173,7 @@ public static class Persistence
             var cmp = x.Priority.CompareTo(y.Priority);
 
             // Then alphabetically. We won't allow the same entry (by name) twice in the SortedSet
-            return cmp != 0 ? cmp : x.Name?.CompareOrdinal(y.Name) ?? -1;
+            return cmp != 0 ? cmp : x.GetHashCode().CompareTo(y.GetHashCode());
         }
     }
 

@@ -1,19 +1,25 @@
 using System;
 using System.Collections.Generic;
+using ModernUO.CodeGeneratedEvents;
 using Server.Mobiles;
 
 namespace Server.Items;
 
-public static class DisguisePersistence
+public class DisguisePersistence : GenericPersistence
 {
+    private static DisguisePersistence _disguisePersistence;
     public static Dictionary<Mobile, Timer> Timers { get; } = new();
 
     public static void Configure()
     {
-        GenericPersistence.Register("Disguises", Serialize, Deserialize);
+        _disguisePersistence = new DisguisePersistence();
     }
 
-    private static void Deserialize(IGenericReader reader)
+    public DisguisePersistence() : base("Disguises", 10)
+    {
+    }
+
+    public override void Deserialize(IGenericReader reader)
     {
         var count = reader.ReadEncodedInt();
         for (var i = 0; i < count; ++i)
@@ -24,13 +30,14 @@ public static class DisguisePersistence
         }
     }
 
-    private static void Serialize(IGenericWriter writer)
+    public override void Serialize(IGenericWriter writer)
     {
         writer.WriteEncodedInt(Timers.Count);
         foreach (var (m, timer) in Timers)
         {
             writer.Write(m);
             writer.Write(timer.Next - Core.Now);
+            writer.Write(m.NameMod);
         }
     }
 
@@ -63,6 +70,7 @@ public static class DisguisePersistence
         t.Stop();
     }
 
+    [OnEvent(nameof(PlayerMobile.PlayerDeathEvent))]
     public static void RemoveTimer(Mobile m)
     {
         if (Timers.Remove(m, out var t))

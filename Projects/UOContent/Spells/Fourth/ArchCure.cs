@@ -4,7 +4,7 @@ using Server.Mobiles;
 
 namespace Server.Spells.Fourth
 {
-    public class ArchCureSpell : MagerySpell, ISpellTargetingPoint3D
+    public class ArchCureSpell : MagerySpell, ITargetingSpell<IPoint3D>
     {
         private static readonly SpellInfo _info = new(
             "Arch Cure",
@@ -48,16 +48,13 @@ namespace Server.Spells.Fourth
                         pool.Enqueue(directTarget);
                     }
 
-                    var eable = map.GetMobilesInRange(loc, 2);
-                    foreach (var m in eable)
+                    foreach (var m in map.GetMobilesInRange(loc, 2))
                     {
                         if (m != directTarget && AreaCanTarget(m, feluccaRules))
                         {
                             pool.Enqueue(m);
                         }
                     }
-
-                    eable.Free();
 
                     Effects.PlaySound(loc, Caster.Map, 0x299);
 
@@ -94,13 +91,11 @@ namespace Server.Spells.Fourth
                     }
                 }
             }
-
-            FinishSequence();
         }
 
         public override void OnCast()
         {
-            Caster.Target = new SpellTargetPoint3D(this, range: Core.ML ? 10 : 12);
+            Caster.Target = new SpellTarget<IPoint3D>(this, allowGround: true);
         }
 
         private bool AreaCanTarget(Mobile target, bool feluccaRules)

@@ -1,112 +1,84 @@
+using ModernUO.Serialization;
 using Server.Items;
 using Server.Mobiles;
 
-namespace Server.Engines.Quests.Collector
+namespace Server.Engines.Quests.Collector;
+
+[SerializationGenerator(0, false)]
+public partial class TomasONeerlan : BaseQuester
 {
-    public class TomasONeerlan : BaseQuester
+    [Constructible]
+    public TomasONeerlan() : base("the famed toymaker")
     {
-        [Constructible]
-        public TomasONeerlan() : base("the famed toymaker")
+    }
+
+    public override string DefaultName => "Tomas O'Neerlan";
+
+    public override void InitBody()
+    {
+        InitStats(100, 100, 25);
+
+        Hue = 0x83F8;
+
+        Female = false;
+        Body = 0x190;
+    }
+
+    public override void InitOutfit()
+    {
+        AddItem(new FancyShirt());
+        AddItem(new LongPants(0x546));
+        AddItem(new Boots(0x452));
+        AddItem(new FullApron(0x455));
+
+        HairItemID = 0x203B; // ShortHair
+        HairHue = 0x455;
+    }
+
+    public override bool CanTalkTo(PlayerMobile to) =>
+        to.Quest is CollectorQuest qs && (qs.IsObjectiveInProgress(typeof(FindTomasObjective))
+                                          || qs.IsObjectiveInProgress(typeof(CaptureImagesObjective))
+                                          || qs.IsObjectiveInProgress(typeof(ReturnImagesObjective)));
+
+    public override void OnTalk(PlayerMobile player, bool contextMenu)
+    {
+        var qs = player.Quest;
+
+        if (qs is not CollectorQuest)
         {
+            return;
         }
 
-        public TomasONeerlan(Serial serial) : base(serial)
-        {
-        }
+        Direction = GetDirectionTo(player);
 
-        public override string DefaultName => "Tomas O'Neerlan";
+        if (qs.FindObjective<FindTomasObjective>() is { Completed: false } obj1) {
+            var paints = new EnchantedPaints();
 
-        public override void InitBody()
-        {
-            InitStats(100, 100, 25);
-
-            Hue = 0x83F8;
-
-            Female = false;
-            Body = 0x190;
-        }
-
-        public override void InitOutfit()
-        {
-            AddItem(new FancyShirt());
-            AddItem(new LongPants(0x546));
-            AddItem(new Boots(0x452));
-            AddItem(new FullApron(0x455));
-
-            HairItemID = 0x203B; // ShortHair
-            HairHue = 0x455;
-        }
-
-        public override bool CanTalkTo(PlayerMobile to)
-        {
-            QuestSystem qs = to.Quest as CollectorQuest;
-
-            if (qs == null)
+            if (!player.PlaceInBackpack(paints))
             {
-                return false;
+                paints.Delete();
+                // You need to clear some space in your inventory to continue with the quest.  Come back here when you have more space in your inventory.
+                player.SendLocalizedMessage(1046260);
+            }
+            else
+            {
+                obj1.Complete();
             }
 
-            return qs.IsObjectiveInProgress(typeof(FindTomasObjective))
-                   || qs.IsObjectiveInProgress(typeof(CaptureImagesObjective))
-                   || qs.IsObjectiveInProgress(typeof(ReturnImagesObjective));
+            return;
         }
 
-        public override void OnTalk(PlayerMobile player, bool contextMenu)
+        if (qs.IsObjectiveInProgress(typeof(CaptureImagesObjective)))
         {
-            var qs = player.Quest;
-
-            if (qs is CollectorQuest)
-            {
-                Direction = GetDirectionTo(player);
-
-                QuestObjective obj = qs.FindObjective<FindTomasObjective>();
-
-                if (obj?.Completed == false)
-                {
-                    Item paints = new EnchantedPaints();
-
-                    if (!player.PlaceInBackpack(paints))
-                    {
-                        paints.Delete();
-                        player.SendLocalizedMessage(
-                            1046260
-                        ); // You need to clear some space in your inventory to continue with the quest.  Come back here when you have more space in your inventory.
-                    }
-                    else
-                    {
-                        obj.Complete();
-                    }
-                }
-                else if (qs.IsObjectiveInProgress(typeof(CaptureImagesObjective)))
-                {
-                    qs.AddConversation(new TomasDuringCollectingConversation());
-                }
-                else
-                {
-                    obj = qs.FindObjective<ReturnImagesObjective>();
-
-                    if (obj?.Completed == false)
-                    {
-                        player.Backpack?.ConsumeUpTo(typeof(EnchantedPaints), 1);
-
-                        obj.Complete();
-                    }
-                }
-            }
+            qs.AddConversation(new TomasDuringCollectingConversation());
+            return;
         }
 
-        public override void Serialize(IGenericWriter writer)
+        if (qs.FindObjective<ReturnImagesObjective>() is { Completed: false } obj2)
         {
-            base.Serialize(writer);
+            player.Backpack?.ConsumeUpTo(typeof(EnchantedPaints), 1);
 
-            writer.Write(0); // version
-        }
-
-        public override void Deserialize(IGenericReader reader)
-        {
-            base.Deserialize(reader);
-
-            var version = reader.ReadInt();
+            obj2.Complete();
         }
     }
 }

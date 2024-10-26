@@ -2,7 +2,7 @@ using Server.Collections;
 
 namespace Server.Spells.Seventh
 {
-    public class MeteorSwarmSpell : MagerySpell, ISpellTargetingPoint3D
+    public class MeteorSwarmSpell : MagerySpell, ITargetingSpell<IPoint3D>
     {
         private static readonly SpellInfo _info = new(
             "Meteor Swarm",
@@ -42,9 +42,8 @@ namespace Server.Spells.Seventh
 
                 if (map != null)
                 {
-                    var eable = map.GetMobilesInRange(loc, 2);
                     using var queue = PooledRefQueue<Mobile>.Create();
-                    foreach (var m in eable)
+                    foreach (var m in map.GetMobilesInRange(loc, 2))
                     {
                         if (Caster == m || !SpellHelper.ValidIndirectTarget(Caster, m) ||
                             !Caster.CanBeHarmful(m, false) || Core.AOS && !Caster.InLOS(m))
@@ -59,8 +58,6 @@ namespace Server.Spells.Seventh
 
                         queue.Enqueue(m);
                     }
-
-                    eable.Free();
 
                     double damage = Core.AOS
                         ? GetNewAosDamage(51, 1, 5, playerVsPlayer)
@@ -103,13 +100,11 @@ namespace Server.Spells.Seventh
                     }
                 }
             }
-
-            FinishSequence();
         }
 
         public override void OnCast()
         {
-            Caster.Target = new SpellTargetPoint3D(this, range: Core.ML ? 10 : 12);
+            Caster.Target = new SpellTarget<IPoint3D>(this, allowGround: true);
         }
     }
 }

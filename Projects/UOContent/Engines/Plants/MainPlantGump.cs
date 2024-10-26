@@ -155,7 +155,7 @@ namespace Server.Engines.Plants
                             AddItem(92, 167, 0x1B9D);
                             AddItem(161, 167, 0x1B9D);
 
-                            AddHtmlLocalized(136, 167, 42, 20, message, 0x00FC00);
+                            AddHtmlLocalized(136, 167, 42, 20, message, 0xFC00);
 
                             break;
                         }
@@ -164,7 +164,7 @@ namespace Server.Engines.Plants
                             AddItem(91, 164, 0x18E6);
                             AddItem(161, 164, 0x18E6);
 
-                            AddHtmlLocalized(132, 167, 42, 20, message, 0x00C207);
+                            AddHtmlLocalized(132, 167, 42, 20, message, 0xC207);
 
                             break;
                         }
@@ -173,7 +173,7 @@ namespace Server.Engines.Plants
                             AddItem(96, 168, 0xC61);
                             AddItem(162, 168, 0xC61);
 
-                            AddHtmlLocalized(129, 167, 42, 20, message, 0x008200);
+                            AddHtmlLocalized(129, 167, 42, 20, message, 0x8200);
 
                             break;
                         }
@@ -182,7 +182,7 @@ namespace Server.Engines.Plants
                             AddItem(93, 162, 0x1A99);
                             AddItem(162, 162, 0x1A99);
 
-                            AddHtmlLocalized(129, 167, 42, 20, message, 0x0083E0);
+                            AddHtmlLocalized(129, 167, 42, 20, message, 0x83E0);
 
                             break;
                         }
@@ -195,11 +195,15 @@ namespace Server.Engines.Plants
             switch (value)
             {
                 case 1:
-                    AddLabel(x, y, 0x35, "+");
-                    break;
+                    {
+                        AddLabel(x, y, 0x35, "+");
+                        break;
+                    }
                 case 2:
-                    AddLabel(x, y, 0x21, "+");
-                    break;
+                    {
+                        AddLabel(x, y, 0x21, "+");
+                        break;
+                    }
             }
         }
 
@@ -208,17 +212,25 @@ namespace Server.Engines.Plants
             switch (value)
             {
                 case 0:
-                    AddLabel(x, y, 0x21, "-");
-                    break;
+                    {
+                        AddLabel(x, y, 0x21, "-");
+                        break;
+                    }
                 case 1:
-                    AddLabel(x, y, 0x35, "-");
-                    break;
+                    {
+                        AddLabel(x, y, 0x35, "-");
+                        break;
+                    }
                 case 3:
-                    AddLabel(x, y, 0x35, "+");
-                    break;
+                    {
+                        AddLabel(x, y, 0x35, "+");
+                        break;
+                    }
                 case 4:
-                    AddLabel(x, y, 0x21, "+");
-                    break;
+                    {
+                        AddLabel(x, y, 0x21, "+");
+                        break;
+                    }
             }
         }
 
@@ -236,25 +248,37 @@ namespace Server.Engines.Plants
 
             switch (m_Plant.PlantSystem.GrowthIndicator)
             {
+                default:
+                case PlantGrowthIndicator.None:
                 case PlantGrowthIndicator.InvalidLocation:
-                    AddLabel(x, y, 0x21, "!");
-                    break;
+                    {
+                        AddLabel(x, y, 0x21, "!");
+                        break;
+                    }
                 case PlantGrowthIndicator.NotHealthy:
-                    AddLabel(x, y, 0x21, "-");
-                    break;
+                    {
+                        AddLabel(x, y, 0x21, "-");
+                        break;
+                    }
                 case PlantGrowthIndicator.Delay:
-                    AddLabel(x, y, 0x35, "-");
-                    break;
+                    {
+                        AddLabel(x, y, 0x35, "-");
+                        break;
+                    }
                 case PlantGrowthIndicator.Grown:
-                    AddLabel(x, y, 0x3, "+");
-                    break;
+                    {
+                        AddLabel(x, y, 0x3, "+");
+                        break;
+                    }
                 case PlantGrowthIndicator.DoubleGrown:
-                    AddLabel(x, y, 0x3F, "+");
-                    break;
+                    {
+                        AddLabel(x, y, 0x3F, "+");
+                        break;
+                    }
             }
         }
 
-        public override void OnResponse(NetState sender, RelayInfo info)
+        public override void OnResponse(NetState sender, in RelayInfo info)
         {
             var from = sender.Mobile;
 
@@ -327,11 +351,16 @@ namespace Server.Engines.Plants
                     }
                 case 6: // Water
                     {
-                        var bev = from.Backpack.FindItemsByType<BaseBeverage>()
-                            .Find(
-                                beverage =>
-                                    beverage.IsEmpty && beverage.Pourable && beverage.Content == BeverageType.Water
-                            );
+                        BaseBeverage bev = null;
+
+                        foreach (var beverage in from.Backpack.FindItemsByType<BaseBeverage>())
+                        {
+                            if (beverage.IsEmpty && beverage.Pourable && beverage.Content == BeverageType.Water)
+                            {
+                                bev = beverage;
+                                break;
+                            }
+                        }
 
                         if (bev == null)
                         {
@@ -425,9 +454,7 @@ namespace Server.Engines.Plants
                 return null;
             }
 
-            var items = from.Backpack.FindItemsByType(new[] { typeof(BasePotion), typeof(PotionKeg) });
-
-            foreach (var item in items)
+            foreach (var item in from.Backpack.FindItems())
             {
                 if (item is BasePotion potion)
                 {
@@ -436,14 +463,9 @@ namespace Server.Engines.Plants
                         return potion;
                     }
                 }
-                else
+                else if (item is PotionKeg keg && keg.Held > 0 && Array.IndexOf(effects, keg.Type) >= 0)
                 {
-                    var keg = (PotionKeg)item;
-
-                    if (keg.Held > 0 && Array.IndexOf(effects, keg.Type) >= 0)
-                    {
-                        return keg;
-                    }
+                    return keg;
                 }
             }
 

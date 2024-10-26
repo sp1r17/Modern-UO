@@ -8,8 +8,10 @@ using Server.Mobiles;
 
 namespace Server.Engines.PlayerMurderSystem;
 
-public static class PlayerMurderSystem
+public class PlayerMurderSystem : GenericPersistence
 {
+    private static PlayerMurderSystem _playerMurderPersistence;
+
     private static readonly ILogger logger = LogFactory.GetLogger(typeof(PlayerMurderSystem));
 
     // All of the players with murders
@@ -28,25 +30,27 @@ public static class PlayerMurderSystem
 
     public static void Configure()
     {
-        GenericPersistence.Register("PlayerMurders", Serialize, Deserialize);
-
         _shortTermMurderDuration = ServerConfiguration.GetOrUpdateSetting("murderSystem.shortTermMurderDuration", TimeSpan.FromHours(8));
         _longTermMurderDuration = ServerConfiguration.GetOrUpdateSetting("murderSystem.longTermMurderDuration", TimeSpan.FromHours(40));
+
+        _playerMurderPersistence = new PlayerMurderSystem();
     }
 
     public static void Initialize()
     {
         EventSink.Disconnected += OnDisconnected;
-        EventSink.Login += OnLogin;
-        EventSink.PlayerDeleted += OnPlayerDeleted;
     }
 
-    private static void OnPlayerDeleted(Mobile m)
+    public static void OnPlayerDeleted(Mobile m)
     {
         if (m is PlayerMobile pm && _murderContexts.Remove(pm, out var context))
         {
             _contextTerms.Remove(context);
         }
+    }
+
+    public PlayerMurderSystem() : base("PlayerMurders", 10)
+    {
     }
 
     // Only used for migrations!
@@ -61,7 +65,7 @@ public static class PlayerMurderSystem
             return;
         }
 
-        var context = player.GetOrCreateMurderContext();
+        var context = GetOrCreateMurderContext(player);
 
         // We make a big assumption that by the time this is called, the Mobile/PlayerMobile info is deserialized
         if (Mobile.MurderMigrations?.TryGetValue(player, out var shortTermMurders) == true)
@@ -74,7 +78,7 @@ public static class PlayerMurderSystem
         UpdateMurderContext(context);
     }
 
-    private static void OnLogin(Mobile m)
+    public static void OnLogin(Mobile m)
     {
         if (m is not PlayerMobile pm || !GetMurderContext(pm, out var context))
         {
@@ -100,7 +104,7 @@ public static class PlayerMurderSystem
         }
     }
 
-    private static void Deserialize(IGenericReader reader)
+    public override void Deserialize(IGenericReader reader)
     {
         var version = reader.ReadEncodedInt();
 
@@ -114,7 +118,7 @@ public static class PlayerMurderSystem
         }
     }
 
-    private static void Serialize(IGenericWriter writer)
+    public override void Serialize(IGenericWriter writer)
     {
         writer.WriteEncodedInt(0); // version
 
@@ -126,11 +130,24 @@ public static class PlayerMurderSystem
         }
     }
 
-    public static bool GetMurderContext(this PlayerMobile player, out MurderContext context) =>
-        _murderContexts.TryGetValue(player, out context);
-
-    public static MurderContext GetOrCreateMurderContext(this PlayerMobile player)
+    public static bool GetMurderContext(PlayerMobile player, out MurderContext context)
     {
+        if (player != null && _murderContexts.TryGetValue(player, out context))
+        {
+            return true;
+        }
+
+        context = null;
+        return false;
+    }
+
+    public static MurderContext GetOrCreateMurderContext(PlayerMobile player)
+    {
+        if (player == null)
+        {
+            return null;
+        }
+
         ref var context = ref CollectionsMarshal.GetValueRefOrAddDefault(_murderContexts, player, out var exists);
         if (!exists)
         {
@@ -142,14 +159,14 @@ public static class PlayerMurderSystem
 
     public static void ManuallySetShortTermMurders(PlayerMobile player, int shortTermMurders)
     {
-        var context = player.GetOrCreateMurderContext();
+        var context = GetOrCreateMurderContext(player);
         context.ShortTermMurders = shortTermMurders;
         UpdateMurderContext(context);
     }
 
     public static void OnPlayerMurder(PlayerMobile player)
     {
-        var context = player.GetOrCreateMurderContext();
+        var context = GetOrCreateMurderContext(player);
         context.ShortTermMurders++;
         player.Kills++;
 

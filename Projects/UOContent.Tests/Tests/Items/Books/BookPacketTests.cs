@@ -1,4 +1,3 @@
-using System;
 using Server;
 using Server.Items;
 using Server.Network;
@@ -6,24 +5,24 @@ using Server.Tests;
 using Server.Tests.Network;
 using Xunit;
 
-namespace UOContent.Tests
+namespace UOContent.Tests;
+
+public class TestBook : BaseBook
 {
-    public class TestBook : BaseBook
+    public TestBook(int itemID, int pageCount = 20, bool writable = true) : base(itemID, pageCount, writable)
     {
-        public TestBook(int itemID, int pageCount = 20, bool writable = true) : base(itemID, pageCount, writable)
-        {
+    }
+
+    public TestBook(int itemID, string title, string author, int pageCount, bool writable) : base(itemID, title, author, pageCount, writable)
+    {
         }
 
-        public TestBook(int itemID, string title, string author, int pageCount, bool writable) : base(itemID, title, author, pageCount, writable)
-        {
+    public TestBook(int itemID, bool writable) : base(itemID, writable)
+    {
         }
 
-        public TestBook(int itemID, bool writable) : base(itemID, writable)
-        {
-        }
-
-        public TestBook(Serial serial) : base(serial)
-        {
+    public TestBook(Serial serial) : base(serial)
+    {
             Pages = new BookPageInfo[20];
 
             for (var i = 0; i < Pages.Length; ++i)
@@ -31,14 +30,14 @@ namespace UOContent.Tests
                 Pages[i] = new BookPageInfo();
             }
         }
-    }
+}
 
-    public class BookPacketTests : IClassFixture<ServerFixture>
+public class BookPacketTests : IClassFixture<ServerFixture>
+{
+    [Theory]
+    [InlineData("🅵🅰🅽🅲🆈 🆃🅴🆇🆃 Author", "🅵🅰🅽🅲🆈 🆃🅴🆇🆃 Title")]
+    public void TestBookCover(string author, string title)
     {
-        [Theory]
-        [InlineData("🅵🅰🅽🅲🆈 🆃🅴🆇🆃 Author", "🅵🅰🅽🅲🆈 🆃🅴🆇🆃 Title")]
-        public void TestBookCover(string author, string title)
-        {
             var m = new Mobile((Serial)0x1);
             m.DefaultMobileInit();
 
@@ -50,13 +49,13 @@ namespace UOContent.Tests
             var ns = PacketTestUtilities.CreateTestNetState();
             ns.SendBookCover(m, book);
 
-            var result = ns.SendPipe.Reader.TryRead();
-            AssertThat.Equal(result.Buffer[0].AsSpan(0), expected);
+        var result = ns.SendPipe.Reader.AvailableToRead();
+        AssertThat.Equal(result, expected);
         }
 
-        [Fact]
-        public void TestBookContent()
-        {
+    [Fact]
+    public void TestBookContent()
+    {
             var m = new Mobile((Serial)0x1);
             m.DefaultMobileInit();
 
@@ -87,8 +86,7 @@ namespace UOContent.Tests
             var ns = PacketTestUtilities.CreateTestNetState();
             ns.SendBookContent(book);
 
-            var result = ns.SendPipe.Reader.TryRead();
-            AssertThat.Equal(result.Buffer[0].AsSpan(0), expected);
+        var result = ns.SendPipe.Reader.AvailableToRead();
+        AssertThat.Equal(result, expected);
         }
-    }
 }

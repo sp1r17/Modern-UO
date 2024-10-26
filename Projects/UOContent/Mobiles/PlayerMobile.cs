@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using ModernUO.CodeGeneratedEvents;
 using Server.Accounting;
 using Server.Collections;
 using Server.ContextMenus;
@@ -28,14 +29,15 @@ using Server.SkillHandlers;
 using Server.Spells;
 using Server.Spells.Bushido;
 using Server.Spells.Fifth;
+using Server.Spells.First;
 using Server.Spells.Fourth;
+using Server.Spells.Mysticism;
 using Server.Spells.Necromancy;
 using Server.Spells.Ninjitsu;
-using Server.Spells.Seventh;
+using Server.Spells.Second;
 using Server.Spells.Sixth;
 using Server.Spells.Spellweaving;
 using Server.Targeting;
-using Server.Utilities;
 using BaseQuestGump = Server.Engines.MLQuests.Gumps.BaseQuestGump;
 using CalcMoves = Server.Movement.Movement;
 using QuestOfferGump = Server.Engines.MLQuests.Gumps.QuestOfferGump;
@@ -95,7 +97,7 @@ namespace Server.Mobiles
         DismountRecovery = 1070859 // You cannot mount while recovering from a dismount special maneuver.
     }
 
-    public class PlayerMobile : Mobile, IHonorTarget, IHasSteps
+    public partial class PlayerMobile : Mobile, IHonorTarget, IHasSteps
     {
         private static bool m_NoRecursion;
 
@@ -144,7 +146,7 @@ namespace Server.Mobiles
             new(268, 624, 15)
         };
 
-        private Dictionary<int, bool> m_AcquiredRecipes;
+        private HashSet<int> _acquiredRecipes;
 
         private HashSet<Mobile> _allFollowers;
         private int m_BeardModID = -1, m_BeardModHue;
@@ -697,30 +699,32 @@ namespace Server.Mobiles
         }
 
         [CommandProperty(AccessLevel.GameMaster, canModify: true)]
-        public ChampionTitleContext ChampionTitles => this.GetOrCreateChampionTitleContext();
+        public ChampionTitleContext ChampionTitles => ChampionTitleSystem.GetOrCreateChampionTitleContext(this);
 
         [CommandProperty(AccessLevel.GameMaster)]
         public int ShortTermMurders
         {
-            get => this.GetMurderContext(out var context) ? context.ShortTermMurders : 0;
+            get => PlayerMurderSystem.GetMurderContext(this, out var context) ? context.ShortTermMurders : 0;
             set => PlayerMurderSystem.ManuallySetShortTermMurders(this, value);
         }
 
         [CommandProperty(AccessLevel.GameMaster)]
-        public DateTime ShortTermMurderExpiration => this.GetMurderContext(out var context) && context.ShortTermMurders > 0
-            ? Core.Now + (context.ShortTermElapse - GameTime)
-            : DateTime.MinValue;
+        public DateTime ShortTermMurderExpiration
+            => PlayerMurderSystem.GetMurderContext(this, out var context) && context.ShortTermMurders > 0
+                ? Core.Now + (context.ShortTermElapse - GameTime)
+                : DateTime.MinValue;
 
         [CommandProperty(AccessLevel.GameMaster)]
-        public DateTime LongTermMurderExpiration => Kills > 0 && this.GetMurderContext(out var context)
-            ? Core.Now + (context.LongTermElapse - GameTime)
-            : DateTime.MinValue;
+        public DateTime LongTermMurderExpiration
+            => Kills > 0 && PlayerMurderSystem.GetMurderContext(this, out var context)
+                ? Core.Now + (context.LongTermElapse - GameTime)
+                : DateTime.MinValue;
 
         [CommandProperty(AccessLevel.GameMaster)]
-        public int KnownRecipes => m_AcquiredRecipes?.Count ?? 0;
+        public int KnownRecipes => _acquiredRecipes?.Count ?? 0;
 
         [CommandProperty(AccessLevel.Counselor, canModify: true)]
-        public VirtueContext Virtues => this.GetOrCreateVirtues();
+        public VirtueContext Virtues => VirtueSystem.GetOrCreateVirtues(this);
 
         public HonorContext ReceivedHonorContext { get; set; }
 
@@ -854,18 +858,13 @@ namespace Server.Mobiles
 
             if (Core.AOS)
             {
-                var mobiles = Map.GetMobilesInRange(location, 0);
-
-                foreach (Mobile m in mobiles)
+                foreach (Mobile m in Map.GetMobilesAt(location))
                 {
                     if (m.Z >= location.Z && m.Z < location.Z + 16 && (!m.Hidden || m.AccessLevel == AccessLevel.Player))
                     {
-                        mobiles.Free();
                         return false;
                     }
                 }
-
-                mobiles.Free();
             }
 
             var bi = item.GetBounce();
@@ -901,17 +900,17 @@ namespace Server.Mobiles
                                 {
                                     Direction.North => itemIDs[0],
                                     Direction.South => itemIDs[0],
-                                    Direction.East  => itemIDs[1],
-                                    Direction.West  => itemIDs[1],
-                                    _               => item.ItemID
+                                    Direction.East => itemIDs[1],
+                                    Direction.West => itemIDs[1],
+                                    _ => item.ItemID
                                 },
                                 4 => dir switch
                                 {
                                     Direction.South => itemIDs[0],
-                                    Direction.East  => itemIDs[1],
+                                    Direction.East => itemIDs[1],
                                     Direction.North => itemIDs[2],
-                                    Direction.West  => itemIDs[3],
-                                    _               => item.ItemID
+                                    Direction.West => itemIDs[3],
+                                    _ => item.ItemID
                                 },
                                 _ => item.ItemID
                             };
@@ -939,14 +938,9 @@ namespace Server.Mobiles
 
         public static void Initialize()
         {
-            EventSink.Login += OnLogin;
             EventSink.Logout += OnLogout;
             EventSink.Connected += EventSink_Connected;
             EventSink.Disconnected += EventSink_Disconnected;
-
-            EventSink.TargetedSkillUse += TargetedSkillUse;
-            EventSink.EquipMacro += EquipMacro;
-            EventSink.UnequipMacro += UnequipMacro;
 
             if (Core.SE)
             {
@@ -966,7 +960,7 @@ namespace Server.Mobiles
             }
         }
 
-        private static void TargetedSkillUse(Mobile from, IEntity target, int skillId)
+        public static void TargetedSkillUse(Mobile from, IEntity target, int skillId)
         {
             if (from == null || target == null)
             {
@@ -987,7 +981,7 @@ namespace Server.Mobiles
             }
 
             if (skillId == 35)
-                // AnimalTaming.DeferredTarget = true;
+            // AnimalTaming.DeferredTarget = true;
             {
                 AnimalTaming.DisableMessage = false;
             }
@@ -1064,11 +1058,20 @@ namespace Server.Mobiles
         {
             foreach (var m in World.Mobiles.Values)
             {
-                if (m is PlayerMobile pm &&
-                    ((!pm.Mounted || pm.Mount is EtherealMount) && pm.AllFollowers?.Count > pm.AutoStabled?.Count ||
-                     pm.Mounted && pm.AllFollowers?.Count > (pm.AutoStabled?.Count ?? 0) + 1))
+                if (m is not PlayerMobile pm || pm.AllFollowers == null || pm.AllFollowers.Count == 0)
                 {
-                    pm.AutoStablePets(); /* autostable checks summons, et al: no need here */
+                    continue;
+                }
+
+                var autoStabledCount = pm.AutoStabled?.Count ?? 0;
+                if (pm.Mounted && pm.Mount is not EtherealMount)
+                {
+                    autoStabledCount++;
+                }
+
+                if (pm.AllFollowers.Count > autoStabledCount)
+                {
+                    pm.AutoStablePets();
                 }
             }
         }
@@ -1086,7 +1089,7 @@ namespace Server.Mobiles
                 }
                 else if (AnimalForm.UnderTransformation(this))
                 {
-                    AnimalForm.RemoveContext(this, true);
+                    AnimalForm.RemoveContext(this);
                 }
             }
 
@@ -1214,9 +1217,14 @@ namespace Server.Mobiles
                     SpecialMove.ClearCurrentMove(this);
                 }
             }
+
+            if (!Meditating)
+            {
+                BuffInfo.RemoveBuff(this, BuffIcon.ActiveMeditation);
+            }
         }
 
-        private static void OnLogin(Mobile from)
+        public static void OnLogin(PlayerMobile from)
         {
             if (AccountHandler.LockdownLevel > AccessLevel.Player)
             {
@@ -1249,15 +1257,22 @@ namespace Server.Mobiles
                     notice = "The server is currently under lockdown. You have sufficient access level to connect.";
                 }
 
-                from.SendGump(new NoticeGump(1060637, 30720, notice, 0xFFC000, 300, 140));
+                from.SendGump(new ServerLockdownNoticeGump(notice));
                 return;
             }
 
-            if (from is PlayerMobile mobile)
-            {
-                mobile.CheckAtrophies();
-                mobile.ClaimAutoStabledPets();
-            }
+            VirtueSystem.CheckAtrophies(from);
+            from.ClaimAutoStabledPets();
+            AnimalForm.GetContext(from)?.Timer.Start();
+        }
+
+        private class ServerLockdownNoticeGump : StaticNoticeGump<ServerLockdownNoticeGump>
+        {
+            public override int Width => 300;
+            public override int Height => 140;
+            public override string Content { get; }
+
+            public ServerLockdownNoticeGump(string content) => Content = content;
         }
 
         public void ValidateEquipment()
@@ -1312,32 +1327,13 @@ namespace Server.Mobiles
                     }
 
                     var item = items[i];
+                    var itemEthic = Ethic.Find(item);
 
-                    if ((item.SavedFlags & 0x100) != 0)
+                    if (itemEthic != null && itemEthic != ethic)
                     {
-                        if (item.Hue != Ethic.Hero.Definition.PrimaryHue)
-                        {
-                            item.SavedFlags &= ~0x100;
-                        }
-                        else if (ethic != Ethic.Hero)
-                        {
-                            from.AddToBackpack(item);
-                            moved = true;
-                            continue;
-                        }
-                    }
-                    else if ((item.SavedFlags & 0x200) != 0)
-                    {
-                        if (item.Hue != Ethic.Evil.Definition.PrimaryHue)
-                        {
-                            item.SavedFlags &= ~0x200;
-                        }
-                        else if (ethic != Ethic.Evil)
-                        {
-                            from.AddToBackpack(item);
-                            moved = true;
-                            continue;
-                        }
+                        from.AddToBackpack(item);
+                        moved = true;
+                        continue;
                     }
 
                     if (item is BaseWeapon weapon)
@@ -1708,21 +1704,18 @@ namespace Server.Mobiles
 
         public override bool Move(Direction d)
         {
-            var ns = NetState;
-
-            if (ns != null)
+            if (NetState != null)
             {
-                if (HasGump<ResurrectGump>())
+                var gumps = NetState.GetGumps();
+
+                if (Alive)
                 {
-                    if (Alive)
-                    {
-                        CloseGump<ResurrectGump>();
-                    }
-                    else
-                    {
-                        SendLocalizedMessage(500111); // You are frozen and cannot move.
-                        return false;
-                    }
+                    gumps.Close<ResurrectGump>();
+                }
+                else if (gumps.Has<ResurrectGump>())
+                {
+                    SendLocalizedMessage(500111); // You are frozen and cannot move.
+                    return false;
                 }
             }
 
@@ -1751,8 +1744,9 @@ namespace Server.Mobiles
 
             newZ = foundation.Z + HouseFoundation.GetLevelZ(context.Level, context.Foundation);
 
-            int newX = X, newY = Y;
-            Movement.Movement.Offset(d, ref newX, ref newY);
+            var newX = X;
+            var newY = Y;
+            CalcMoves.Offset(d, ref newX, ref newY);
 
             var startX = foundation.X + foundation.Components.Min.X + 1;
             var startY = foundation.Y + foundation.Components.Min.Y + 1;
@@ -1839,13 +1833,18 @@ namespace Server.Mobiles
             }
         }
 
-        public override void GetContextMenuEntries(Mobile from, List<ContextMenuEntry> list)
+        public override void GetContextMenuEntries(Mobile from, ref PooledRefList<ContextMenuEntry> list)
         {
-            base.GetContextMenuEntries(from, list);
+            base.GetContextMenuEntries(from, ref list);
 
             if (from == this)
             {
-                Quest?.GetContextMenuEntries(list);
+                if (Alive && Backpack != null && CanSee(Backpack))
+                {
+                    list.Add(new OpenBackpackEntry());
+                }
+
+                Quest?.GetContextMenuEntries(ref list);
 
                 if (Alive)
                 {
@@ -1929,17 +1928,17 @@ namespace Server.Mobiles
 
                     if (theirParty == null && ourParty == null)
                     {
-                        list.Add(new AddToPartyEntry(from, this));
+                        list.Add(new AddToPartyEntry());
                     }
                     else if (theirParty != null && theirParty.Leader == from)
                     {
                         if (ourParty == null)
                         {
-                            list.Add(new AddToPartyEntry(from, this));
+                            list.Add(new AddToPartyEntry());
                         }
                         else if (ourParty == theirParty)
                         {
-                            list.Add(new RemoveFromPartyEntry(from, this));
+                            list.Add(new RemoveFromPartyEntry());
                         }
                     }
                 }
@@ -1949,7 +1948,7 @@ namespace Server.Mobiles
                 if (curhouse != null && Alive && Core.Expansion >= Expansion.AOS && curhouse.IsAosRules &&
                     curhouse.IsFriend(from))
                 {
-                    list.Add(new EjectPlayerEntry(from, this));
+                    list.Add(new EjectPlayerEntry());
                 }
             }
         }
@@ -1977,10 +1976,9 @@ namespace Server.Mobiles
         {
             var house = BaseHouse.FindHouseAt(this);
 
-            if (CheckAlive() && house?.IsOwner(this) == true && house.InternalizedVendors.Count > 0)
+            if (CheckAlive() && house?.IsOwner(this) == true && house.InternalizedVendors.Count > 0 && NetState is NetState { } ns)
             {
-                CloseGump<ReclaimVendorGump>();
-                SendGump(new ReclaimVendorGump(house));
+                ns.SendGump(new ReclaimVendorGump(house));
             }
         }
 
@@ -2393,9 +2391,14 @@ namespace Server.Mobiles
 
             DropHolding();
 
+            // During AOS+, insured/blessed items are moved out of their child containers and put directly into the backpack.
+            // This fixes a "bug" where players put blessed items in nested bags and they were dropped on death
             if (Core.AOS && Backpack?.Deleted == false)
             {
-                Backpack.FindItemsByType<Item>(FindItems_Callback).ForEach(item => Backpack.AddItem(item));
+                foreach (var item in Backpack.EnumerateItems(true, FindItems_Callback))
+                {
+                    Backpack.AddItem(item);
+                }
             }
 
             EquipSnapshot = new List<Item>(Items);
@@ -2527,6 +2530,9 @@ namespace Server.Mobiles
             return res;
         }
 
+        [GeneratedEvent(nameof(PlayerDeathEvent))]
+        public static partial void PlayerDeathEvent(PlayerMobile m);
+
         public override void OnDeath(Container c)
         {
             if (m_NonAutoreinsuredItems > 0)
@@ -2541,25 +2547,13 @@ namespace Server.Mobiles
             HueMod = -1;
             NameMod = null;
             SavagePaintExpiration = TimeSpan.Zero;
-
             SetHairMods(-1, -1);
-
-            PolymorphSpell.StopTimer(this);
-            IncognitoSpell.StopTimer(this);
-            DisguisePersistence.RemoveTimer(this);
-
-            EndAction<PolymorphSpell>();
-            EndAction<IncognitoSpell>();
-
-            MeerMage.StopEffect(this, false);
 
             if (Flying)
             {
                 Flying = false;
                 BuffInfo.RemoveBuff(this, BuffIcon.Fly);
             }
-
-            StolenItem.ReturnOnDeath(this, c);
 
             if (PermaFlags.Count > 0)
             {
@@ -2646,10 +2640,6 @@ namespace Server.Mobiles
 
             Guilds.Guild.HandleDeath(this, killer);
 
-            MLQuestSystem.HandleDeath(this);
-
-            DuelContext?.OnDeath(this, c);
-
             if (m_BuffTable != null)
             {
                 using var queue = PooledRefQueue<BuffInfo>.Create();
@@ -2667,6 +2657,8 @@ namespace Server.Mobiles
                     RemoveBuff(queue.Dequeue());
                 }
             }
+
+            PlayerDeathEvent(this);
         }
 
         public override bool MutateSpeech(List<Mobile> hears, ref string text, ref object context)
@@ -2767,11 +2759,11 @@ namespace Server.Mobiles
             }
         }
 
-        public override void Damage(int amount, Mobile from = null, bool informMount = true)
+        public override void Damage(int amount, Mobile from = null, bool informMount = true, bool ignoreEvilOmen = false)
         {
             var damageBonus = 1.0;
 
-            if (EvilOmenSpell.EndEffect(this) && !PainSpikeSpell.UnderEffect(this))
+            if (EvilOmenSpell.EndEffect(this) && !ignoreEvilOmen)
             {
                 damageBonus += 0.25;
             }
@@ -2850,6 +2842,7 @@ namespace Server.Mobiles
 
             switch (version)
             {
+                case 34: // Acquired Recipes is now a Set
                 case 33: // Removes champion title
                 case 32: // Removes virtue properties
                 case 31: // Removed Short/Long Term Elapse
@@ -2900,14 +2893,14 @@ namespace Server.Mobiles
 
                         if (recipeCount > 0)
                         {
-                            m_AcquiredRecipes = new Dictionary<int, bool>();
+                            _acquiredRecipes = new HashSet<int>();
 
                             for (var i = 0; i < recipeCount; i++)
                             {
                                 var r = reader.ReadInt();
-                                if (reader.ReadBool()) // Don't add in recipes which we haven't gotten or have been removed
+                                if (version > 33 || reader.ReadBool()) // Don't add in recipes which we haven't gotten or have been removed
                                 {
-                                    m_AcquiredRecipes.Add(r, true);
+                                    _acquiredRecipes.Add(r);
                                 }
                             }
                         }
@@ -3033,7 +3026,8 @@ namespace Server.Mobiles
                 case 13: // just removed m_PaidInsurance list
                 case 12:
                     {
-                        BOBFilter = new BOBFilter(reader);
+                        BOBFilter = new BOBFilter();
+                        BOBFilter.Deserialize(reader);
                         goto case 11;
                     }
                 case 11:
@@ -3149,7 +3143,7 @@ namespace Server.Mobiles
                     }
             }
 
-            if (!CharacterCreation.VerifyProfession(Profession))
+            if (!ProfessionInfo.VerifyProfession(Profession))
             {
                 Profession = 0;
             }
@@ -3192,7 +3186,7 @@ namespace Server.Mobiles
         {
             base.Serialize(writer);
 
-            writer.Write(33); // version
+            writer.Write(34); // version
 
             if (Stabled == null)
             {
@@ -3232,18 +3226,17 @@ namespace Server.Mobiles
                 writer.Write(AutoStabled);
             }
 
-            if (m_AcquiredRecipes == null)
+            if (_acquiredRecipes == null)
             {
                 writer.Write(0);
             }
             else
             {
-                writer.Write(m_AcquiredRecipes.Count);
+                writer.Write(_acquiredRecipes.Count);
 
-                foreach (var kvp in m_AcquiredRecipes)
+                foreach (var recipeId in _acquiredRecipes)
                 {
-                    writer.Write(kvp.Key);
-                    writer.Write(kvp.Value);
+                    writer.Write(recipeId);
                 }
             }
 
@@ -3362,14 +3355,25 @@ namespace Server.Mobiles
             base.OnAfterDelete();
 
             var faction = Faction.Find(this);
-
             faction?.RemoveMember(this);
 
             MLQuestSystem.HandleDeletion(this);
-
             BaseHouse.HandleDeletion(this);
-
             DisguisePersistence.RemoveTimer(this);
+
+            StaminaSystem.OnPlayerDeleted(this);
+            JusticeVirtue.OnPlayerDeleted(this);
+            PlayerMurderSystem.OnPlayerDeleted(this);
+            ChampionTitleSystem.OnPlayerDeleted(this);
+
+            // Spells
+            MagicReflectSpell.EndReflect(this);
+            ReactiveArmorSpell.EndArmor(this);
+            ProtectionSpell.EndProtection(this);
+            StoneFormSpell.RemoveEffects(this);
+            AnimateDeadSpell.RemoveEffects(this);
+            SummonFamiliarSpell.RemoveEffects(this);
+            AnimalForm.RemoveLastAnimalForm(this);
         }
 
         public override void GetProperties(IPropertyList list)
@@ -3421,7 +3425,7 @@ namespace Server.Mobiles
             // https://uo.com/wiki/ultima-online-wiki/player/skill-titles-order/
             if (DisplayChampionTitle)
             {
-                var titleLabel = this.GetChampionTitleLabel();
+                var titleLabel = ChampionTitleSystem.GetChampionTitleLabel(this);
                 if (titleLabel > 0)
                 {
                     list.Add(titleLabel);
@@ -3721,8 +3725,8 @@ namespace Server.Mobiles
                     var name = ammo.Name ?? ammo switch
                     {
                         Arrow _ => $"arrow{(ammo.Amount != 1 ? "s" : "")}",
-                        Bolt _  => $"bolt{(ammo.Amount != 1 ? "s" : "")}",
-                        _       => $"#{ammo.LabelNumber}"
+                        Bolt _ => $"bolt{(ammo.Amount != 1 ? "s" : "")}",
+                        _ => $"#{ammo.LabelNumber}"
                     };
 
                     PlaceInBackpack(ammo);
@@ -3885,11 +3889,11 @@ namespace Server.Mobiles
                 return;
             }
 
-            if (Core.SE)
+            if (Core.SE && NetState is { } ns)
             {
-                if (!HasGump<CancelRenewInventoryInsuranceGump>())
+                if (!ns.HasGump<CancelRenewInventoryInsuranceGump>())
                 {
-                    SendGump(new CancelRenewInventoryInsuranceGump(this, null));
+                    ns.SendGump(new CancelRenewInventoryInsuranceGump(this, null));
                 }
             }
             else
@@ -3910,13 +3914,13 @@ namespace Server.Mobiles
                 return;
             }
 
-            var items = new List<Item>();
+            using var queue = PooledRefQueue<Item>.Create(128);
 
             foreach (var item in Items)
             {
                 if (DisplayInItemInsuranceGump(item))
                 {
-                    items.Add(item);
+                    queue.Enqueue(item);
                 }
             }
 
@@ -3924,20 +3928,29 @@ namespace Server.Mobiles
 
             if (pack != null)
             {
-                items.AddRange(pack.FindItemsByType<Item>(DisplayInItemInsuranceGump));
+                foreach (var item in pack.FindItems())
+                {
+                    if (DisplayInItemInsuranceGump(item))
+                    {
+                        queue.Enqueue(item);
+                    }
+                }
             }
 
             // TODO: Investigate item sorting
 
-            CloseGump<ItemInsuranceMenuGump>();
+            if (NetState is { } ns)
+            {
+                ns.CloseGump<ItemInsuranceMenuGump>();
 
-            if (items.Count == 0)
-            {
-                SendLocalizedMessage(1114915, "", 0x35); // None of your current items meet the requirements for insurance.
-            }
-            else
-            {
-                SendGump(new ItemInsuranceMenuGump(this, items.ToArray()));
+                if (queue.Count == 0)
+                {
+                    SendLocalizedMessage(1114915, "", 0x35); // None of your current items meet the requirements for insurance.
+                }
+                else
+                {
+                    ns.SendGump(new ItemInsuranceMenuGump(this, queue.ToArray()));
+                }
             }
         }
 
@@ -3956,12 +3969,14 @@ namespace Server.Mobiles
 
         private void ToggleQuestItemTarget()
         {
-            BaseQuestGump.CloseOtherGumps(this);
-            CloseGump<QuestLogDetailedGump>();
-            CloseGump<QuestLogGump>();
-            CloseGump<QuestOfferGump>();
-            // CloseGump( typeof( UnknownGump802 ) );
-            // CloseGump( typeof( UnknownGump804 ) );
+            if (NetState != null)
+            {
+                BaseQuestGump.CloseOtherGumps(this);
+                var gumps = this.GetGumps();
+                gumps.Close<QuestLogDetailedGump>();
+                gumps.Close<QuestLogGump>();
+                gumps.Close<QuestOfferGump>();
+            }
 
             BeginTarget(-1, false, TargetFlags.None, ToggleQuestItem_Callback);
             SendLocalizedMessage(1072352); // Target the item you wish to toggle Quest Item status on <ESC> to cancel
@@ -4147,7 +4162,7 @@ namespace Server.Mobiles
         {
             if (checkTurning && (dir & Direction.Mask) != (Direction & Direction.Mask))
             {
-                return CalcMoves.RunMountDelay; // We are NOT actually moving (just a direction change)
+                return CalcMoves.TurnDelay; // We are NOT actually moving (just a direction change)
             }
 
             var context = TransformationSpellHelper.GetContext(this);
@@ -4411,7 +4426,10 @@ namespace Server.Mobiles
 
         private void SendYoungDeathNotice()
         {
-            SendGump(new YoungDeathNotice());
+            if (NetState is { } ns)
+            {
+                ns.SendGump(new YoungDeathNoticeGump());
+            }
         }
 
         public override void OnSpeech(SpeechEventArgs e)
@@ -4449,12 +4467,11 @@ namespace Server.Mobiles
             InvalidateProperties();
         }
 
-        public virtual bool HasRecipe(Recipe r) => r != null && HasRecipe(r.ID);
+        public bool HasRecipe(Recipe r) => r != null && HasRecipe(r.ID);
 
-        public virtual bool HasRecipe(int recipeID) =>
-            m_AcquiredRecipes != null && m_AcquiredRecipes.TryGetValue(recipeID, out var value) && value;
+        public bool HasRecipe(int recipeID) => _acquiredRecipes?.Contains(recipeID) == true;
 
-        public virtual void AcquireRecipe(Recipe r)
+        public void AcquireRecipe(Recipe r)
         {
             if (r != null)
             {
@@ -4462,15 +4479,33 @@ namespace Server.Mobiles
             }
         }
 
-        public virtual void AcquireRecipe(int recipeID)
+        public void AcquireRecipe(int recipeID)
         {
-            m_AcquiredRecipes ??= new Dictionary<int, bool>();
-            m_AcquiredRecipes[recipeID] = true;
+            _acquiredRecipes ??= new HashSet<int>();
+            _acquiredRecipes.Add(recipeID);
         }
 
-        public virtual void ResetRecipes()
+        public void RemoveRecipe(int recipeID) => _acquiredRecipes?.Remove(recipeID);
+
+        public void ResetRecipes() => _acquiredRecipes = null;
+
+        public void SendAddBuffPacket(BuffInfo buffInfo)
         {
-            m_AcquiredRecipes = null;
+            if (buffInfo == null)
+            {
+                return;
+            }
+
+            NetState.SendAddBuffPacket(
+                Serial,
+                buffInfo.ID,
+                buffInfo.TitleCliloc,
+                buffInfo.SecondaryCliloc,
+                buffInfo.Args,
+                buffInfo.TimeStart == 0
+                    ? 0
+                    : Math.Max(buffInfo.TimeStart + (long)buffInfo.TimeLength.TotalMilliseconds - Core.TickCount, 0)
+            );
         }
 
         public void ResendBuffs()
@@ -4479,7 +4514,7 @@ namespace Server.Mobiles
             {
                 foreach (var info in m_BuffTable.Values)
                 {
-                    info.SendAddBuffPacket(NetState, Serial);
+                    SendAddBuffPacket(info);
                 }
             }
         }
@@ -4499,7 +4534,23 @@ namespace Server.Mobiles
 
             if (NetState?.BuffIcon == true)
             {
-                b.SendAddBuffPacket(NetState, Serial);
+                // Synchronize the buff icon as close to _on the second_ as we can.
+                var msecs = b.TimeLength.Milliseconds;
+                if (msecs >= 8)
+                {
+                    Timer.DelayCall(TimeSpan.FromMilliseconds(msecs), (buffInfo, pm) =>
+                    {
+                        // They are still online, we still have the buff icon in the table, and it is the same buff icon
+                        if (pm.NetState != null && pm.m_BuffTable?.GetValueOrDefault(buffInfo.ID) == buffInfo)
+                        {
+                            pm.SendAddBuffPacket(buffInfo);
+                        }
+                    }, b, this);
+                }
+                else
+                {
+                    SendAddBuffPacket(b);
+                }
             }
         }
 
@@ -4522,7 +4573,7 @@ namespace Server.Mobiles
 
             if (NetState?.BuffIcon == true)
             {
-                BuffInfo.SendRemoveBuffPacket(NetState, Serial, b);
+                NetState.SendRemoveBuffPacket(Serial, b);
             }
 
             if (m_BuffTable.Count <= 0)
@@ -4576,7 +4627,7 @@ namespace Server.Mobiles
             public CallbackEntry(int number, int range, ContextCallback callback) : base(number, range) =>
                 m_Callback = callback;
 
-            public override void OnClick()
+            public override void OnClick(Mobile from, IEntity target)
             {
                 m_Callback?.Invoke();
             }
@@ -4616,7 +4667,7 @@ namespace Server.Mobiles
                 AddHtmlLocalized(148, 118, 450, 20, 1071022, 0x7FFF); // DISABLE IT!
             }
 
-            public override void OnResponse(NetState sender, RelayInfo info)
+            public override void OnResponse(NetState sender, in RelayInfo info)
             {
                 if (!m_Player.CheckAlive())
                 {
@@ -4767,7 +4818,7 @@ namespace Server.Mobiles
 
             public ItemInsuranceMenuGump NewInstance() => new(m_From, m_Items, m_Insure, m_Page);
 
-            public override void OnResponse(NetState sender, RelayInfo info)
+            public override void OnResponse(NetState sender, in RelayInfo info)
             {
                 if (info.ButtonID == 0 || !m_From.CheckAlive())
                 {
@@ -4863,7 +4914,7 @@ namespace Server.Mobiles
                 AddHtmlLocalized(148, 118, 450, 20, 1073996, 0x7FFF); // ACCEPT
             }
 
-            public override void OnResponse(NetState sender, RelayInfo info)
+            public override void OnResponse(NetState sender, in RelayInfo info)
             {
                 if (!m_From.CheckAlive())
                 {

@@ -8,7 +8,7 @@ namespace Server.Items
         public override int BaseMana => 25;
         public override double DamageScalar => 1.5;
 
-        public virtual double GetRequiredTactics(Mobile from)
+        public override double GetRequiredTactics(Mobile from)
         {
             if (from.Weapon is BaseWeapon weapon)
             {
@@ -26,7 +26,7 @@ namespace Server.Items
             return 200.0;
         }
 
-        public override void OnHit(Mobile attacker, Mobile defender, int damage)
+        public override void OnHit(Mobile attacker, Mobile defender, int damage, WorldLocation worldLocation)
         {
             if (!Validate(attacker) || !CheckMana(attacker, true))
             {

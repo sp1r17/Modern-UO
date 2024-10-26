@@ -2,7 +2,7 @@ using Server.Collections;
 
 namespace Server.Spells.Seventh
 {
-    public class ChainLightningSpell : MagerySpell, ISpellTargetingPoint3D
+    public class ChainLightningSpell : MagerySpell, ITargetingSpell<IPoint3D>
     {
         private static readonly SpellInfo _info = new(
             "Chain Lightning",
@@ -35,11 +35,9 @@ namespace Server.Spells.Seventh
 
                 if (map != null)
                 {
-                    using var pool = PooledRefQueue<Mobile>.Create();
                     var pvp = false;
-
-                    var eable = map.GetMobilesInRange(loc, 2);
-                    foreach (var m in eable)
+                    using var pool = PooledRefQueue<Mobile>.Create();
+                    foreach (var m in map.GetMobilesInRange(loc, 2))
                     {
                         if (Core.AOS && (m == Caster || !Caster.InLOS(m)) ||
                             !SpellHelper.ValidIndirectTarget(Caster, m) ||
@@ -55,8 +53,6 @@ namespace Server.Spells.Seventh
 
                         pool.Enqueue(m);
                     }
-
-                    eable.Free();
 
                     if (pool.Count > 0)
                     {
@@ -99,13 +95,11 @@ namespace Server.Spells.Seventh
                     }
                 }
             }
-
-            FinishSequence();
         }
 
         public override void OnCast()
         {
-            Caster.Target = new SpellTargetPoint3D(this, range: Core.ML ? 10 : 12);
+            Caster.Target = new SpellTarget<IPoint3D>(this, allowGround: true);
         }
     }
 }
