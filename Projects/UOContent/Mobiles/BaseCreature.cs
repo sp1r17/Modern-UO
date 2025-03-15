@@ -204,7 +204,7 @@ namespace Server.Mobiles
 
         private static Mobile m_NoDupeGuards;
 
-        private static readonly bool EnableRummaging = true;
+        private static readonly bool EnableRummaging = false;
         public static readonly TimeSpan ShoutDelay = TimeSpan.FromMinutes(1);
 
         private static readonly Type[] _eggs =
