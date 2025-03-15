@@ -518,7 +518,7 @@ namespace Server.Spells
             }
 
             //var scale = 1.0 + (caster.Skills.Magery.Value - 100.0) / 200.0;
-            var scale = 0.5 * (caster.Skills.SpiritSpeak.Value / 100.0);
+            var scale = 1.5 * (caster.Skills.SpiritSpeak.Value / 100.0);
 
             if (scaleDuration)
             {
