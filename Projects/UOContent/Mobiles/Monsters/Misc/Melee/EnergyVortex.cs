@@ -64,41 +64,8 @@ namespace Server.Mobiles
         public override bool BleedImmune => true;
         public override Poison PoisonImmune => Poison.Lethal;
 
-        public override bool FollowsAcquireRules => Core.AOS || !Summoned || SummonMaster?.Player != true || Map != Map.Felucca;
-
-        public override double GetFightModeRanking(Mobile m, FightMode acqType, bool bPlayerOnly) =>
-            (m.Int + m.Skills.Magery.Value) / Math.Max(GetDistanceToSqrt(m), 1.0);
-
         public override int GetAngerSound() => 0x15;
 
         public override int GetAttackSound() => 0x28;
-
-        public override void OnThink()
-        {
-            if (Core.SE && Summoned)
-            {
-                using var list = PooledRefList<Mobile>.Create();
-                foreach (var m in GetMobilesInRange(5))
-                {
-                    if (m is EnergyVortex or BladeSpirits && ((BaseCreature)m).Summoned)
-                    {
-                        list.Add(m);
-                    }
-                }
-
-                var amount = list.Count - 6;
-                if (amount > 0)
-                {
-                    list.Shuffle();
-
-                    while (amount > 0)
-                    {
-                        Dispel(list[amount--]);
-                    }
-                }
-            }
-
-            base.OnThink();
-        }
     }
 }
