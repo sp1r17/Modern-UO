@@ -2985,8 +2985,9 @@ namespace Server.Mobiles
                 }
 
                 PrivateOverheadMessage(MessageType.Regular, 0x3B2, number, from.NetState);
+                PrivateOverheadMessage(MessageType.Regular, 0x3B2, false, "Remaining Time: "
+                    + (SummonEnd - DateTime.Now).ToString(@"mm\:ss"), from.NetState);
             }
-
             base.OnSingleClick(from);
         }
 
