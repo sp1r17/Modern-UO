@@ -72,6 +72,9 @@ namespace Server.Mobiles
         public override double DispelDifficulty => 125.0;
         public override double DispelFocus => 45.0;
 
+        public override bool IsDispellable => false;
+
+
         public override Poison PoisonImmune => Poison.Regular;
         public override bool CanFly => true;
     }

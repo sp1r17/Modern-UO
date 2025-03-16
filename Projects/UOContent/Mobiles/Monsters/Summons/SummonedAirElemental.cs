@@ -76,7 +76,10 @@ namespace Server.Mobiles
         public override string DefaultName => "an air elemental";
 
         public override bool BleedImmune => true;
-        
+
+        public override bool IsDispellable => false;
+
+
         public override double DispelDifficulty => 117.5;
         public override double DispelFocus => 45.0;
 

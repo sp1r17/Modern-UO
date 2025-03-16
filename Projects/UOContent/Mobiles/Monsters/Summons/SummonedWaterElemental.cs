@@ -72,6 +72,8 @@ namespace Server.Mobiles
         public override string CorpseName => "a water elemental corpse";
         public override string DefaultName => "a water elemental";
 
+        public override bool IsDispellable => false;
+
         public override bool BleedImmune => true;
         
         public override double DispelDifficulty => 117.5;
