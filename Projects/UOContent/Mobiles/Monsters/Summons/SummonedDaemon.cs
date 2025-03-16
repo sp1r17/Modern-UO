@@ -6,7 +6,7 @@ namespace Server.Mobiles
     public partial class SummonedDaemon : BaseCreature
     {
         [Constructible]
-        public SummonedDaemon() : base(AIType.AI_Mage)
+        public SummonedDaemon() : base(AIType.AI_Melee)
         {
             Name = NameList.RandomName("daemon");
             Body = Core.AOS ? 10 : 9;
@@ -44,7 +44,7 @@ namespace Server.Mobiles
 
                 SetHits(286, 303);
 
-                SetDamage(7, 14);
+                SetDamage(17, 24);
 
                 SetDamageType(ResistanceType.Physical, 100);
 
@@ -63,7 +63,7 @@ namespace Server.Mobiles
 
             VirtualArmor = 58;
             
-            ControlSlots = Core.SE ? 4 : 5;
+            ControlSlots = 2;
         }
         
         public override bool DeleteCorpseOnDeath => Summoned;
@@ -71,6 +71,9 @@ namespace Server.Mobiles
         
         public override double DispelDifficulty => 125.0;
         public override double DispelFocus => 45.0;
+
+        public override bool IsDispellable => false;
+
 
         public override Poison PoisonImmune => Poison.Regular;
         public override bool CanFly => true;

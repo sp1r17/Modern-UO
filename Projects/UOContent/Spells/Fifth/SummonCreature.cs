@@ -9,7 +9,7 @@ namespace Server.Spells.Fifth
             "Summon Creature",
             "Kal Xen",
             16,
-            false,
+            true,
             Reagent.Bloodmoss,
             Reagent.MandrakeRoot,
             Reagent.SpidersSilk
@@ -22,21 +22,15 @@ namespace Server.Spells.Fifth
             typeof(PolarBear),
             typeof(GrizzlyBear),
             typeof(BlackBear),
-            typeof(Horse),
             typeof(Walrus),
-            typeof(Chicken),
             typeof(Scorpion),
             typeof(GiantSerpent),
-            typeof(Llama),
             typeof(Alligator),
             typeof(GreyWolf),
             typeof(Slime),
             typeof(Eagle),
             typeof(Gorilla),
             typeof(SnowLeopard),
-            typeof(Pig),
-            typeof(Hind),
-            typeof(Rabbit)
         };
 
         public SummonCreatureSpell(Mobile caster, Item scroll = null) : base(caster, scroll, _info)
@@ -69,15 +63,15 @@ namespace Server.Spells.Fifth
                 {
                     var creature = m_Types.RandomElement().CreateInstance<BaseCreature>();
 
-                    // creature.ControlSlots = 2;
+                    creature.ControlSlots = 2;
 
-                    var duration = Core.Expansion switch
-                    {
-                        Expansion.None => TimeSpan.FromSeconds(Caster.Skills.Magery.Value),
-                        _ => TimeSpan.FromSeconds((int)Caster.Skills.Magery.Value * 4)
-                    };
+                    //var duration = Core.Expansion switch
+                    //{
+                    //    Expansion.None => TimeSpan.FromSeconds(2.0),
+                    //    _ => TimeSpan.FromSeconds((int)Caster.Skills.Magery.Value * 4)
+                    //};
 
-                    SpellHelper.Summon(creature, Caster, 0x215, duration, false, false);
+                    SpellHelper.Summon(creature, Caster, 0x215, TimeSpan.FromSeconds(0), true, true);
                 }
                 catch
                 {
@@ -86,20 +80,6 @@ namespace Server.Spells.Fifth
             }
 
             FinishSequence();
-        }
-
-        public override TimeSpan GetCastDelay()
-        {
-            var delay = base.GetCastDelay() * (Core.AOS ? 5 : 4);
-
-            // SA made everything 0.25 slower, but that is applied after the scalar
-            // So remove 0.25 * 5 to compensate
-            if (Core.SA)
-            {
-                delay -= TimeSpan.FromSeconds(1.25);
-            }
-
-            return delay;
         }
     }
 }

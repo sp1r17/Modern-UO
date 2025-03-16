@@ -204,7 +204,7 @@ namespace Server.Mobiles
 
         private static Mobile m_NoDupeGuards;
 
-        private static readonly bool EnableRummaging = true;
+        private static readonly bool EnableRummaging = false;
         public static readonly TimeSpan ShoutDelay = TimeSpan.FromMinutes(1);
 
         private static readonly Type[] _eggs =
@@ -494,7 +494,9 @@ namespace Server.Mobiles
         public virtual bool AllowFemaleTamer => true;
         public virtual bool SubdueBeforeTame => false;
         public virtual bool StatLossAfterTame => SubdueBeforeTame;
-        public virtual bool ReduceSpeedWithDamage => true;
+        //public virtual bool ReduceSpeedWithDamage => true;
+        public virtual bool ReduceSpeedWithDamage => false;     // Do not reduce speed with damage by default
+
         public virtual bool IsSubdued => SubdueBeforeTame && Hits < HitsMax / 10;
 
         public virtual bool Commandable => true;
@@ -2494,6 +2496,11 @@ namespace Server.Mobiles
             {
                 if (!Core.ML || ct != OrderType.Follow && ct != OrderType.Stop && ct != OrderType.Stay)
                 {
+                    if (ct == OrderType.Follow || ct == OrderType.Come)
+                    {
+                        Warmode = false;
+                        return;
+                    }
                     AIObject.OnAggressiveAction(aggressor);
                 }
                 else
@@ -2978,8 +2985,9 @@ namespace Server.Mobiles
                 }
 
                 PrivateOverheadMessage(MessageType.Regular, 0x3B2, number, from.NetState);
+                PrivateOverheadMessage(MessageType.Regular, 0x3B2, false, "Remaining Time: "
+                    + (SummonEnd - DateTime.Now).ToString(@"mm\:ss"), from.NetState);
             }
-
             base.OnSingleClick(from);
         }
 
@@ -3593,6 +3601,7 @@ namespace Server.Mobiles
             creature.RangeHome = 10;
             creature.Summoned = true;
             creature.SummonMaster = caster;
+            creature.SetSpeed(0.1, 0.12, false);
 
             var pack = creature.Backpack;
 

@@ -505,7 +505,12 @@ public abstract class BaseAI
                             }
                         case 0x165: // all follow
                             {
-                                BeginPickTarget(e.Mobile, OrderType.Follow);
+                                if (m_Mobile.CheckControlChance(e.Mobile))
+                                {
+                                    m_Mobile.ControlTarget = e.Mobile;
+                                    m_Mobile.ControlOrder = OrderType.Follow;
+                                }
+
                                 return;
                             }
                         case 0x166: // all guard
@@ -816,10 +821,10 @@ public abstract class BaseAI
             return false;
         }
 
-        if (CheckFlee())
-        {
-            return true;
-        }
+        //if (CheckFlee())
+        //{
+        //    return true;
+        //}
 
         switch (Action)
         {
@@ -841,11 +846,11 @@ public abstract class BaseAI
                     return DoActionGuard();
                 }
 
-            case ActionType.Flee:
-                {
-                    m_Mobile.OnActionFlee();
-                    return DoActionFlee();
-                }
+            //case ActionType.Flee:
+            //    {
+            //        m_Mobile.OnActionFlee();
+            //        return DoActionFlee();
+            //    }
 
             case ActionType.Interact:
                 {
@@ -897,13 +902,13 @@ public abstract class BaseAI
                     break;
                 }
 
-            case ActionType.Flee:
-                {
-                    m_Mobile.Warmode = true;
-                    m_Mobile.FocusMob = null;
-                    m_Mobile.SetCurrentSpeedToActive();
-                    break;
-                }
+            //case ActionType.Flee:
+            //    {
+            //        m_Mobile.Warmode = true;
+            //        m_Mobile.FocusMob = null;
+            //        m_Mobile.SetCurrentSpeedToActive();
+            //        break;
+            //    }
 
             case ActionType.Interact:
                 {

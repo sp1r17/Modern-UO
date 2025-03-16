@@ -54,15 +54,15 @@ namespace Server.Mobiles
                 SetResistance(ResistanceType.Poison, 30, 40);
                 SetResistance(ResistanceType.Energy, 30, 40);
 
-                SetSkill(SkillName.EvalInt, 60.1, 75.0);
-                SetSkill(SkillName.Magery, 60.1, 75.0);
-                SetSkill(SkillName.MagicResist, 75.2, 105.0);
+                SetSkill(SkillName.EvalInt, 100.0, 105.0);
+                SetSkill(SkillName.Magery, 85.0, 95.0);
+                SetSkill(SkillName.MagicResist, 85.0, 105.0);
                 SetSkill(SkillName.Tactics, 80.1, 100.0);
                 SetSkill(SkillName.Wrestling, 70.1, 100.0);
             }
 
-            VirtualArmor = 40;
-            ControlSlots = 4;
+            VirtualArmor = 25;
+            ControlSlots = 2;
 
             AddItem(new LightSource());
         }
@@ -73,6 +73,9 @@ namespace Server.Mobiles
         public override string DefaultName => "a fire elemental";
 
         public override bool BleedImmune => true;
+
+        public override bool IsDispellable => false;
+
 
         public override double DispelDifficulty => 117.5;
         public override double DispelFocus => 45.0;

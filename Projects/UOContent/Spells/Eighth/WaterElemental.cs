@@ -10,7 +10,7 @@ namespace Server.Spells.Eighth
             "Kal Vas Xen An Flam",
             269,
             9070,
-            false,
+            true,
             Reagent.Bloodmoss,
             Reagent.MandrakeRoot,
             Reagent.SpidersSilk
@@ -29,7 +29,7 @@ namespace Server.Spells.Eighth
                 return false;
             }
 
-            if (Caster.Followers + 3 > Caster.FollowersMax)
+            if (Caster.Followers + 2 > Caster.FollowersMax)
             {
                 Caster.SendLocalizedMessage(1049645); // You have too many followers to summon that creature.
                 return false;
@@ -49,7 +49,7 @@ namespace Server.Spells.Eighth
                     _  => TimeSpan.FromSeconds(4 * Math.Max(5, Caster.Skills.Magery.Value)),
                 };
 
-                SpellHelper.Summon(new SummonedWaterElemental(), Caster, 0x217, duration, false, false);
+                SpellHelper.Summon(new SummonedWaterElemental(), Caster, 0x217, duration, true, true);
             }
 
             FinishSequence();

@@ -517,16 +517,18 @@ namespace Server.Spells
                 return;
             }
 
-            var scale = 1.0 + (caster.Skills.Magery.Value - 100.0) / 200.0;
+            //var scale = 1.0 + (caster.Skills.Magery.Value - 100.0) / 200.0;
+            var scale = caster.Skills.SpiritSpeak.Value / 100.0;
 
             if (scaleDuration)
             {
-                duration *= scale;
+                duration = TimeSpan.FromMinutes(2) + (TimeSpan.FromMinutes(8) * scale);
             }
 
             if (scaleStats)
             {
-                creature.RawStr = (int)(creature.RawStr * scale);
+                creature.HitsMaxSeed = (int)((creature.HitsMaxSeed * 2.5) * scale);
+                creature.RawStr = (int)((creature.RawStr * 2.5) * scale);
                 creature.Hits = creature.HitsMax;
 
                 creature.RawDex = (int)(creature.RawDex * scale);
@@ -534,6 +536,18 @@ namespace Server.Spells
 
                 creature.RawInt = (int)(creature.RawInt * scale);
                 creature.Mana = creature.ManaMax;
+
+                creature.VirtualArmor = (int)((creature.VirtualArmor * 1.25) * scale);
+
+                var resistVal = creature.Skills.MagicResist.Value;
+                creature.SetSkill(SkillName.MagicResist, (resistVal * 1.5) * scale);
+
+                var wrestlingVal = creature.Skills.Wrestling.Value;
+                creature.SetSkill(SkillName.Wrestling, (wrestlingVal * 1.5) * scale);
+
+                var minDamageVal = (int)((creature.DamageMin * 1.5) * scale);
+                var maxDamageVal = (int)((creature.DamageMax * 1.5) * scale);
+                creature.SetDamage(minDamageVal, maxDamageVal);
             }
 
             var p = new Point3D(caster);
