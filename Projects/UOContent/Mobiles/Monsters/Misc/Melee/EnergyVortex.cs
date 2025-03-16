@@ -56,8 +56,7 @@ namespace Server.Mobiles
         public override string CorpseName => "an energy vortex corpse";
         public override bool DeleteCorpseOnDeath => Summoned;
 
-        public override double DispelDifficulty => 80.0;
-        public override double DispelFocus => 20.0;
+        public override bool IsDispellable => false;
 
         public override string DefaultName => "an energy vortex";
 
