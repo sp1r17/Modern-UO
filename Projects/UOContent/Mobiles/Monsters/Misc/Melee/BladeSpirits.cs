@@ -48,10 +48,7 @@ namespace Server.Mobiles
 
         public override bool DeleteCorpseOnDeath => Core.AOS;
         public override bool IsHouseSummonable => true;
-
-        public override double DispelDifficulty => 0.0;
-        public override double DispelFocus => 20.0;
-
+        public override bool IsDispellable => false;
         public override bool BleedImmune => true;
         public override Poison PoisonImmune => Poison.Lethal;
 
