@@ -39,7 +39,7 @@ namespace Server.Mobiles
                 SetDex(66, 85);
                 SetInt(71, 92);
 
-                SetHits(76, 93);
+                SetHits(350, 450);
 
                 SetDamage(9, 16);
 
@@ -56,7 +56,7 @@ namespace Server.Mobiles
                 SetSkill(SkillName.Wrestling, 60.1, 100.0);
             }
 
-            VirtualArmor = 34;
+            VirtualArmor = 68;
             ControlSlots = 2;
         }
 

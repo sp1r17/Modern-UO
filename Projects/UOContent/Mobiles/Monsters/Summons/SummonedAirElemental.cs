@@ -6,7 +6,7 @@ namespace Server.Mobiles
     public partial class SummonedAirElemental : BaseCreature
     {
         [Constructible]
-        public SummonedAirElemental() : base(AIType.AI_Mage)
+        public SummonedAirElemental() : base(AIType.AI_Melee)
         {
             Body = 13;
             Hue = 0x4001;
@@ -47,7 +47,7 @@ namespace Server.Mobiles
 
                 SetHits(76, 93);
 
-                SetDamage(8, 10);
+                SetDamage(14, 24);
 
                 SetDamageType(ResistanceType.Physical, 20);
                 SetDamageType(ResistanceType.Cold, 40);
@@ -62,8 +62,8 @@ namespace Server.Mobiles
                 SetSkill(SkillName.EvalInt, 60.1, 75.0);
                 SetSkill(SkillName.Magery, 60.1, 75.0);
                 SetSkill(SkillName.MagicResist, 60.1, 75.0);
-                SetSkill(SkillName.Tactics, 60.1, 80.0);
-                SetSkill(SkillName.Wrestling, 60.1, 80.0);
+                SetSkill(SkillName.Tactics, 80.0, 100.0);
+                SetSkill(SkillName.Wrestling, 90.0, 105.0);
             }
 
             VirtualArmor = 40;

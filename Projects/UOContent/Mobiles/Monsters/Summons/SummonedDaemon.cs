@@ -6,7 +6,7 @@ namespace Server.Mobiles
     public partial class SummonedDaemon : BaseCreature
     {
         [Constructible]
-        public SummonedDaemon() : base(AIType.AI_Mage)
+        public SummonedDaemon() : base(AIType.AI_Melee)
         {
             Name = NameList.RandomName("daemon");
             Body = Core.AOS ? 10 : 9;
@@ -44,7 +44,7 @@ namespace Server.Mobiles
 
                 SetHits(286, 303);
 
-                SetDamage(7, 14);
+                SetDamage(17, 24);
 
                 SetDamageType(ResistanceType.Physical, 100);
 
