@@ -311,8 +311,7 @@ namespace Server.Misc
 
                 var actual = Notoriety.CanBeAttacked;
 
-                if (target.Kills >= 5 || creature.AlwaysMurderer ||
-                    creature.IsAnimatedDead)
+                if (target.Kills >= 5 || creature.AlwaysMurderer || creature.IsAnimatedDead)
                 {
                     actual = Notoriety.Murderer;
                 }
